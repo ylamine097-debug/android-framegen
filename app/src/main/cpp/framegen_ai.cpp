@@ -22,7 +22,6 @@
 namespace {
 
 struct Engine {
-    bool gpuInstanceCreated = false;
     std::unique_ptr<RIFE> rife;
     int width = 0;
     int height = 0;
@@ -66,6 +65,16 @@ static void rgb_to_rgba(const unsigned char* rgb, unsigned char* rgba, int pixel
     }
 }
 
+static std::once_flag gpuInitOnce;
+static int gpuInitResult = -1;
+
+static int ensure_gpu_instance() {
+    std::call_once(gpuInitOnce, []() {
+        gpuInitResult = ncnn::create_gpu_instance();
+    });
+    return gpuInitResult;
+}
+
 } // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -81,13 +90,9 @@ Java_dev_framegen_AiFrameGenerator_nativeCreate(
     std::string modelDir(modelChars);
     env->ReleaseStringUTFChars(jModelDirectory, modelChars);
 
-    // Create the Vulkan instance before querying the mobile GPU. This is
-    // required by NCNN's Vulkan backend and prevents a CPU/invalid-device
-    // fallback that can leave RIFE uninitialized.
-    if (ncnn::create_gpu_instance() != 0) {
-        LOGE("ncnn::create_gpu_instance failed");
-        return 0;
-    }
+    // Initialize NCNN's process-wide Vulkan instance once. Recreating or
+    // destroying this global device between surface changes can destabilize
+    // mobile GPU drivers and cause intermittent crashes.
 
     int requestedGpu = static_cast<int>(gpuIndex);
     if (requestedGpu == -2) {
@@ -97,7 +102,6 @@ Java_dev_framegen_AiFrameGenerator_nativeCreate(
     }
 
     auto engine = std::make_unique<Engine>();
-    engine->gpuInstanceCreated = true;
     int cpuThreads = static_cast<int>(std::thread::hardware_concurrency());
     if (cpuThreads <= 0) cpuThreads = 4;
     // RIFE's num_threads controls its CPU helper threads. Keep it modest so the
@@ -116,9 +120,8 @@ Java_dev_framegen_AiFrameGenerator_nativeCreate(
 
     if (engine->rife->load(modelDir) != 0) {
         LOGE("RIFE model load failed: %s", modelDir.c_str());
-        if (engine->gpuInstanceCreated) {
-            ncnn::destroy_gpu_instance();
-        }
+        // Keep the process-wide Vulkan instance alive. The next renderer can
+        // safely reuse it if Android recreates the overlay surface.
         return 0;
     }
 
@@ -233,9 +236,6 @@ Java_dev_framegen_AiFrameGenerator_nativeRelease(
 ) {
     auto* engine = reinterpret_cast<Engine*>(handle);
     if (!engine) return;
-    const bool destroyGpu = engine->gpuInstanceCreated;
-    delete engine;
-    if (destroyGpu) {
-        ncnn::destroy_gpu_instance();
-    }
+    // Do not destroy ncnn's process-wide Vulkan instance here. Android may
+    // recreate the capture/overlay surface while the process stays alive.
 }
