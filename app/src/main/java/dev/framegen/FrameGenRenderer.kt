@@ -36,6 +36,7 @@ class FrameGenRenderer(
     private val dpi: Int,
     private val refreshHz: Float,
     private val modelDirectory: String,
+    private val aiWarmupMs: Long,
     private val onBufferSize: (Int, Int) -> Unit,
     private val onStats: (inputFps: Int, outputFps: Int, aiFps: Int) -> Unit
 ) : Thread("FrameGen-AI") {
@@ -202,6 +203,7 @@ void main() {
     private var statsInputFrames = 0
     private var statsOutputFrames = 0
     private var statsAiFrames = 0
+    private var aiEnabledAtNs = Long.MAX_VALUE
 
     fun requestResize(nw: Int, nh: Int) { pending = intArrayOf(nw, nh) }
 
@@ -214,6 +216,7 @@ void main() {
     override fun run() {
         try {
             initEgl()
+            aiEnabledAtNs = System.nanoTime() + aiWarmupMs.coerceAtLeast(0L) * 1_000_000L
             initGl()
             loop()
         } catch (t: Throwable) {
@@ -274,7 +277,8 @@ void main() {
                     val outPixels = generatedPixels
                     val neural = ai
 
-                    if (aiReady && neural != null && prevPixels != null && currPixels != null && outPixels != null) {
+                    val aiEnabled = System.nanoTime() >= aiEnabledAtNs
+                    if (aiEnabled && aiReady && neural != null && prevPixels != null && currPixels != null && outPixels != null) {
                         for (k in 1 until effectiveMultiplier) {
                             val ok = neural.interpolate(
                                 prevPixels,
@@ -300,9 +304,11 @@ void main() {
                             present()
                         }
                     } else {
-                        motion(1 - cur, cur)
+                        // During warm-up, or when RIFE is unavailable, preserve
+                        // the real game image. Do not show the old shader path:
+                        // it can cause a visible brightness/flicker change.
                         for (k in 1 until effectiveMultiplier) {
-                            drawInterp(1 - cur, cur, k.toFloat() / effectiveMultiplier)
+                            drawBlit(tex[1 - cur])
                             sleepUntil(base + k * step)
                             present()
                         }
