@@ -42,10 +42,10 @@ class MainActivity : Activity() {
             setPadding(0, 16, 0, 8)
         }
 
-        root.addView(label("FrameGen — Choose Game", 28f))
+        root.addView(label("FrameGen — Neural AI", 28f))
         root.addView(label(
-            "Select the game first. FrameGen will only start after the selected game is opened. " +
-            "After Android capture permission is approved, the game gets launched and FrameGen waits 10 seconds before processing."
+            "Select the game first. FrameGen uses a real neural frame-interpolation model (RIFE v4.6) running locally through Vulkan/NCNN. " +
+            "After Android capture permission is approved, the selected game opens and FrameGen waits 10 seconds before processing."
         ))
 
         root.addView(label("1. Choose your game"))
@@ -99,7 +99,7 @@ class MainActivity : Activity() {
         })
         root.addView(multSpinner)
 
-        root.addView(label("3. Processing resolution"))
+        root.addView(label("3. AI processing resolution"))
         val qSpinner = Spinner(this)
         qSpinner.adapter = ArrayAdapter(
             this,
