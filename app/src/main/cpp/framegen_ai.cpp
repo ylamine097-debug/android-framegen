@@ -62,6 +62,55 @@ static void rgb_to_rgba(const unsigned char* rgb, unsigned char* rgba, int pixel
     }
 }
 
+static float average_luma_rgb(const unsigned char* rgb, int pixelCount) {
+    if (pixelCount <= 0) return 0.0f;
+
+    // Sample every 16th pixel to keep the correction cheap on mobile CPUs.
+    const int stride = 16;
+    double sum = 0.0;
+    int count = 0;
+
+    for (int i = 0; i < pixelCount; i += stride) {
+        const float r = rgb[i * 3 + 0] / 255.0f;
+        const float g = rgb[i * 3 + 1] / 255.0f;
+        const float b = rgb[i * 3 + 2] / 255.0f;
+        sum += 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        ++count;
+    }
+
+    return count > 0 ? static_cast<float>(sum / count) : 0.0f;
+}
+
+static void match_luminance(
+    unsigned char* rgb,
+    int pixelCount,
+    float targetLuma
+) {
+    const float sourceLuma = average_luma_rgb(rgb, pixelCount);
+
+    if (sourceLuma < 0.01f || targetLuma < 0.01f) {
+        return;
+    }
+
+    // Match the global luminance of the neural output to the average of the
+    // two real source frames. Clamp the correction to avoid over-amplifying
+    // genuinely darker/brighter scenes.
+    float gain = targetLuma / sourceLuma;
+    gain = std::clamp(gain, 0.72f, 1.38f);
+
+    for (int i = 0; i < pixelCount; ++i) {
+        rgb[i * 3 + 0] = static_cast<unsigned char>(
+            std::clamp(std::lround(rgb[i * 3 + 0] * gain), 0L, 255L)
+        );
+        rgb[i * 3 + 1] = static_cast<unsigned char>(
+            std::clamp(std::lround(rgb[i * 3 + 1] * gain), 0L, 255L)
+        );
+        rgb[i * 3 + 2] = static_cast<unsigned char>(
+            std::clamp(std::lround(rgb[i * 3 + 2] * gain), 0L, 255L)
+        );
+    }
+}
+
 } // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -177,6 +226,12 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
         nullptr
     );
 
+    const float targetLuma =
+        0.5f * (
+            average_luma_rgb(engine->rgb0.data(), static_cast<int>(pixels)) +
+            average_luma_rgb(engine->rgb1.data(), static_cast<int>(pixels))
+        );
+
     const int ret = engine->rife->process_v4(
         in0,
         in1,
@@ -192,6 +247,14 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
     outimage.to_pixels(
         engine->rgb0.data(),
         ncnn::Mat::PIXEL_RGB
+    );
+
+    // Prevent the AI intermediate frame from causing a visible global
+    // brightness jump/dip relative to the real game frames.
+    match_luminance(
+        engine->rgb0.data(),
+        static_cast<int>(pixels),
+        targetLuma
     );
 
     rgb_to_rgba(
