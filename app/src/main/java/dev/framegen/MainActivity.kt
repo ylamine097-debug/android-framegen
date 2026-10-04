@@ -508,7 +508,9 @@ class MainActivity : Activity() {
         return packages.values
             .filter { app ->
                 app.category == ApplicationInfo.CATEGORY_GAME ||
-                    hasGameCategory(app.packageName)
+                    hasGameCategory(app.packageName) ||
+                    // Some older/ported games still expose the legacy game flag.
+                    (app.flags and ApplicationInfo.FLAG_IS_GAME) != 0
             }
             .map {
                 GameEntry(
@@ -593,14 +595,10 @@ class MainActivity : Activity() {
             return
         }
 
-        val launchIntent = packageManager.getLaunchIntentForPackage(game.packageName)
-        if (launchIntent == null) {
-            Toast.makeText(this, "Could not launch " + game.label, Toast.LENGTH_LONG).show()
-            return
-        }
-
-        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        startActivity(launchIntent)
+        // The game was already launched during PREPARE GAME CAPTURE and is the
+        // exact window selected by Android's MediaProjection dialog. Do not
+        // relaunch it here; doing so can kick the user to the game's main menu
+        // and invalidate the selected capture window.
 
         val serviceIntent = Intent(this, FrameGenService::class.java)
             .putExtra("code", code)
@@ -610,11 +608,20 @@ class MainActivity : Activity() {
             .putExtra("delayMs", 10_000L)
             .putExtra("gameName", game.label)
 
-        startForegroundService(serviceIntent)
+        try {
+            startForegroundService(serviceIntent)
+        } catch (t: Throwable) {
+            Toast.makeText(
+                this,
+                "Could not start FrameGen: " + (t.message ?: "unknown error"),
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
 
         Toast.makeText(
             this,
-            game.label + " started • 10-second AI warm-up",
+            game.label + " connected • 10-second AI warm-up",
             Toast.LENGTH_LONG
         ).show()
 
