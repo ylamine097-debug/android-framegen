@@ -33,9 +33,12 @@ class MainActivity : Activity() {
         }
         fun label(t: String, size: Float = 16f) = TextView(this).apply { text = t; textSize = size; setPadding(0, 24, 0, 8) }
 
-        root.addView(label("FrameGen", 28f))
-        root.addView(label("GPU frame generation overlay for Mali / Android 14+.\n" +
-                "When Android asks what to share, choose \"A single app\" and pick your game."))
+        root.addView(label("FrameGen — Game Mode", 28f))
+        root.addView(label(
+            "Real-time frame interpolation for Android 14+ games.\n" +
+            "For best results, when Android asks what to share, choose \"A single app\" and select the game you want FrameGen to process.\n\n" +
+            "FrameGen renders generated frames in a GPU overlay. It does not modify, inject into, or bypass the game's process."
+        ))
 
         root.addView(label("Frame multiplier"))
         val multGroup = RadioGroup(this).apply { orientation = RadioGroup.HORIZONTAL }
@@ -55,15 +58,20 @@ class MainActivity : Activity() {
         root.addView(qGroup)
 
         root.addView(Button(this).apply {
-            text = "Start"
+            text = "Start Game Capture"
             setOnClickListener { start() }
         })
         root.addView(Button(this).apply {
-            text = "Stop"
+            text = "Stop FrameGen"
             setOnClickListener {
                 startService(Intent(this@MainActivity, FrameGenService::class.java).setAction(FrameGenService.ACTION_STOP))
             }
         })
+
+        root.addView(label(
+            "Compatibility: Vulkan/OpenGL ES games that Android allows MediaProjection to capture. " +
+            "Games using secure/protected rendering may not be capturable."
+        , 12f))
         root.gravity = Gravity.TOP
         setContentView(root)
     }
