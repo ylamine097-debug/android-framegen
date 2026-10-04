@@ -171,7 +171,7 @@ class MainActivity : Activity() {
 
         hero.addView(label(
             "RIFE v4.6 neural interpolation • Vulkan / NCNN • ARM64",
-            12f, text, false
+            12f, uiText, false
         ).also { addMargin(it, top = 7, bottom = 2) })
 
         hero.addView(label(
@@ -189,7 +189,7 @@ class MainActivity : Activity() {
             background = rounded(card, line, 20)
         }
 
-        gameCard.addView(label("1  •  CHOOSE GAME", 13f, text, true))
+        gameCard.addView(label("1  •  CHOOSE GAME", 13f, uiText, true))
         gameCard.addView(label(
             "Pick the game before starting FrameGen.",
             11f, muted
@@ -260,7 +260,7 @@ class MainActivity : Activity() {
             background = rounded(card, line, 20)
         }
 
-        settingsCard.addView(label("2  •  FRAME GENERATION SETTINGS", 13f, text, true))
+        settingsCard.addView(label("2  •  FRAME GENERATION SETTINGS", 13f, uiText, true))
 
         val multTitle = label("Frame multiplier", 11f, muted, true)
         settingsCard.addView(multTitle)
