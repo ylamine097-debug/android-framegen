@@ -67,6 +67,7 @@ class FrameGenService : Service() {
     private var captureData: Intent? = null
     private var startScheduled = false
     private var delayEndAt = 0L
+    private var aiWarmupMs = DEFAULT_DELAY_MS
 
     private val delayedStart = object : Runnable {
         override fun run() {
@@ -131,19 +132,19 @@ class FrameGenService : Service() {
             return START_NOT_STICKY
         }
 
-        val delayMs = intent
+        aiWarmupMs = intent
             .getLongExtra("delayMs", DEFAULT_DELAY_MS)
             .coerceIn(0L, 30_000L)
 
         startForeground(
             1,
-            buildNotification("Preparing " + gameName + "…"),
+            buildNotification("Starting capture • " + gameName),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
         )
 
-        delayEndAt = System.currentTimeMillis() + delayMs
-        startScheduled = true
-        main.post(delayedStart)
+        // Create the one-use MediaProjection and VirtualDisplay immediately
+        // after user consent. Only the AI interpolation waits 10 seconds.
+        beginCapture()
 
         return START_NOT_STICKY
     }
@@ -277,6 +278,7 @@ class FrameGenService : Service() {
                         dpi,
                         refreshHz,
                         modelDirectory ?: "",
+                        aiWarmupMs,
                         { w, h ->
                             main.post {
                                 overlaySurface?.holder?.setFixedSize(w, h)
