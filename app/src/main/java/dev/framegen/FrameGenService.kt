@@ -40,6 +40,7 @@ class FrameGenService : Service() {
     private var quality = 0.5f
     private var mult = 2
     private var gameName = "selected game"
+    private var modelDirectory: String? = null
 
     private var captureCode = 0
     private var captureData: Intent? = null
@@ -147,8 +148,21 @@ class FrameGenService : Service() {
 
             projection = mp
             mp.registerCallback(callback, main)
+
+            val modelDir = prepareRifeModel()
+            if (modelDir == null) {
+                Toast.makeText(
+                    this,
+                    "AI model files are missing. Rebuild the APK with the bundled RIFE model.",
+                    Toast.LENGTH_LONG
+                ).show()
+                stopSelf()
+                return
+            }
+            modelDirectory = modelDir
+
             setupOverlay(mp)
-            updateNotification("FrameGen active • " + gameName)
+            updateNotification("AI FrameGen active • " + gameName)
         } catch (e: Exception) {
             Toast.makeText(
                 this,
@@ -156,6 +170,34 @@ class FrameGenService : Service() {
                 Toast.LENGTH_LONG
             ).show()
             stopSelf()
+        }
+    }
+
+    private fun prepareRifeModel(): String? {
+        return try {
+            val outDir = java.io.File(filesDir, "models/rife-v4.6")
+            outDir.mkdirs()
+
+            val files = arrayOf("flownet.param", "flownet.bin")
+            for (name in files) {
+                val out = java.io.File(outDir, name)
+                if (!out.exists() || out.length() == 0L) {
+                    assets.open("models/rife-v4.6/" + name).use { input ->
+                        out.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                }
+            }
+
+            if (files.all { java.io.File(outDir, it).exists() }) outDir.absolutePath else null
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "Could not prepare AI model: " + (e.message ?: "unknown error"),
+                Toast.LENGTH_LONG
+            ).show()
+            null
         }
     }
 
@@ -183,7 +225,8 @@ class FrameGenService : Service() {
                         cw,
                         ch,
                         dpi,
-                        refreshHz
+                        refreshHz,
+                        modelDirectory ?: ""
                     ) { w, h ->
                         main.post {
                             overlay?.holder?.setFixedSize(w, h)
