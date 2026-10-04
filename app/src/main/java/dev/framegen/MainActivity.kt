@@ -496,7 +496,7 @@ class MainActivity : Activity() {
 
         // Some games advertise CATEGORY_GAME only on their launcher activity.
         collect(Intent(Intent.ACTION_MAIN).apply {
-            addCategory(Intent.CATEGORY_GAME)
+            addCategory("android.intent.category.GAME")
         })
 
         // Other games are only discoverable as normal launcher activities but
