@@ -1,5 +1,6 @@
 package dev.framegen
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -10,13 +11,13 @@ import android.graphics.drawable.GradientDrawable
 import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
-import android.view.Window
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -33,9 +34,21 @@ data class GameEntry(
 
 class MainActivity : Activity() {
     private val reqCapture = 42
+
     private var mult = 2
     private var quality = 0.67f
     private var selectedGame: GameEntry? = null
+
+    private var captureCode: Int? = null
+    private var captureData: Intent? = null
+    private var captureReady = false
+
+    private var startButton: Button? = null
+    private var overlayStatus: TextView? = null
+    private var notificationStatus: TextView? = null
+    private var captureStatus: TextView? = null
+    private var prepareCaptureButton: Button? = null
+    private var selectedPackageText: TextView? = null
 
     private val bg = Color.rgb(7, 13, 24)
     private val card = Color.rgb(14, 25, 43)
@@ -88,7 +101,13 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun addMargin(view: View, top: Int = 0, bottom: Int = 0, left: Int = 0, right: Int = 0) {
+    private fun addMargin(
+        view: View,
+        top: Int = 0,
+        bottom: Int = 0,
+        left: Int = 0,
+        right: Int = 0
+    ) {
         val p = view.layoutParams as? LinearLayout.LayoutParams
             ?: LinearLayout.LayoutParams(-1, -2)
         p.setMargins(dp(left), dp(top), dp(right), dp(bottom))
@@ -113,7 +132,6 @@ class MainActivity : Activity() {
         }
         scroll.addView(root)
 
-        // Header / brand
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -137,130 +155,193 @@ class MainActivity : Activity() {
         titleBox.addView(label("NEURAL AI FRAME GENERATION", 10f, cyan, true))
         header.addView(titleBox, LinearLayout.LayoutParams(0, -2, 1f))
 
-        val status = TextView(this).apply {
-            text = "● READY"
-            textSize = 10f
-            setTextColor(green)
+        val status = label("● SETUP", 10f, cyan, true).apply {
             gravity = Gravity.CENTER
             setPadding(dp(11), dp(7), dp(11), dp(7))
-            background = rounded(Color.rgb(12, 49, 41), Color.rgb(26, 94, 78), 20)
+            background = rounded(Color.rgb(9, 45, 57), Color.rgb(28, 91, 106), 20)
         }
         header.addView(status)
 
         root.addView(header)
         addMargin(header, bottom = 18)
 
-        // Hero card
         val hero = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(17), dp(16), dp(17), dp(16))
             background = rounded(card, line, 20)
         }
-
         val heroTop = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         heroTop.addView(label("GAME FRAME GENERATION", 12f, muted, true), LinearLayout.LayoutParams(0, -2, 1f))
-        val local = label("ON-DEVICE", 10f, cyan, true).apply {
+        heroTop.addView(label("ON-DEVICE", 10f, cyan, true).apply {
             setPadding(dp(9), dp(5), dp(9), dp(5))
             background = rounded(Color.rgb(9, 45, 57), Color.rgb(28, 91, 106), 16)
-        }
-        heroTop.addView(local)
+        })
         hero.addView(heroTop)
-
         hero.addView(label(
             "RIFE v4.6 neural interpolation • Vulkan / NCNN • ARM64",
-            12f, uiText, false
+            12f, uiText
         ).also { addMargin(it, top = 7, bottom = 2) })
-
         hero.addView(label(
-            "Designed for modern Adreno and Mali devices.",
-            11f, muted, false
+            "Optimized for modern Adreno and Mali-class devices.",
+            11f, muted
         ))
-
         root.addView(hero)
         addMargin(hero, bottom = 16)
 
-        // Game section
         val gameCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(15), dp(16), dp(16))
             background = rounded(card, line, 20)
         }
-
         gameCard.addView(label("1  •  CHOOSE GAME", 13f, uiText, true))
         gameCard.addView(label(
-            "Pick the game before starting FrameGen.",
+            "Only games are listed here. WhatsApp and ordinary apps are filtered out.",
             11f, muted
         ).also { addMargin(it, top = 3, bottom = 10) })
 
         val games = findLaunchableGames()
-        val gameSpinner = Spinner(this).apply {
-            minimumHeight = dp(54)
-            background = rounded(cardAlt, line, 14)
-            setPadding(dp(12), 0, dp(10), 0)
-            adapter = ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                games.map { it.label }
-            )
-        }
-
         if (games.isEmpty()) {
-            gameSpinner.isEnabled = false
-            gameCard.addView(label("No games detected. Only apps categorized by Android as games are shown.", 13f, red))
+            gameCard.addView(label(
+                "No games detected. Some games do not advertise themselves to Android as CATEGORY_GAME.",
+                12f, red
+            ))
         } else {
+            val gameSpinner = Spinner(this).apply {
+                minimumHeight = dp(54)
+                background = rounded(cardAlt, line, 14)
+                setPadding(dp(12), 0, dp(10), 0)
+                adapter = ArrayAdapter(
+                    this@MainActivity,
+                    android.R.layout.simple_spinner_dropdown_item,
+                    games.map { it.label }
+                )
+                setSelection(0)
+            }
             selectedGame = games[0]
-            gameSpinner.setSelection(0)
             gameSpinner.setOnItemSelectedListener(object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(
                     parent: AdapterView<*>?,
-                    view: android.view.View?,
+                    view: View?,
                     position: Int,
                     id: Long
                 ) {
                     selectedGame = games.getOrNull(position)
+                    selectedPackageText?.text =
+                        "Selected: " + (selectedGame?.packageName ?: "none")
+                    refreshReadiness()
                 }
 
                 override fun onNothingSelected(parent: AdapterView<*>?) {
                     selectedGame = null
+                    refreshReadiness()
                 }
             })
             gameCard.addView(gameSpinner)
-            gameCard.addView(label(
-                "Selected: " + (selectedGame?.packageName ?: "none"),
+            selectedPackageText = label(
+                "Selected: " + selectedGame?.packageName,
                 10f, muted
-            ).also { addMargin(it, top = 8) })
+            )
+            gameCard.addView(selectedPackageText)
+            addMargin(selectedPackageText!!, top = 8)
         }
 
         root.addView(gameCard)
         addMargin(gameCard, bottom = 14)
 
-        // Big start button — deliberately near the top.
-        val startButton = Button(this).apply {
+        val permissionCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(15), dp(16), dp(16))
+            background = rounded(card, line, 20)
+        }
+        permissionCard.addView(label("2  •  PERMISSIONS & CAPTURE", 13f, uiText, true))
+        permissionCard.addView(label(
+            "Everything below must be READY before START FRAMEGEN unlocks.",
+            11f, muted
+        ).also { addMargin(it, top = 3, bottom = 8) })
+
+        overlayStatus = label("", 12f)
+        notificationStatus = label("", 12f)
+        captureStatus = label("", 12f)
+        permissionCard.addView(overlayStatus)
+        permissionCard.addView(notificationStatus)
+        permissionCard.addView(captureStatus)
+
+        val enableOverlay = Button(this).apply {
+            text = "ENABLE OVERLAY PERMISSION"
+            textSize = 12f
+            minHeight = dp(50)
+            setTextColor(uiText)
+            background = rounded(cardAlt, line, 15)
+            stateListAnimator = null
+            setOnClickListener {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:" + packageName)
+                    )
+                )
+            }
+        }
+        permissionCard.addView(enableOverlay)
+        addMargin(enableOverlay, top = 7)
+
+        val enableNotifications = Button(this).apply {
+            text = "ENABLE NOTIFICATIONS"
+            textSize = 12f
+            minHeight = dp(50)
+            setTextColor(uiText)
+            background = rounded(cardAlt, line, 15)
+            stateListAnimator = null
+            setOnClickListener {
+                if (Build.VERSION.SDK_INT >= 33 &&
+                    checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7)
+                }
+            }
+        }
+        permissionCard.addView(enableNotifications)
+        addMargin(enableNotifications, top = 7)
+
+        prepareCaptureButton = Button(this).apply {
+            text = "PREPARE GAME CAPTURE"
+            textSize = 12f
+            minHeight = dp(54)
+            setTextColor(uiText)
+            background = rounded(cardAlt, line, 15)
+            stateListAnimator = null
+            setOnClickListener { prepareGameCapture() }
+        }
+        permissionCard.addView(prepareCaptureButton)
+        addMargin(prepareCaptureButton!!, top = 7)
+
+        root.addView(permissionCard)
+        addMargin(permissionCard, bottom = 14)
+
+        startButton = Button(this).apply {
             text = "START FRAMEGEN"
-            textSize = 18f
+            textSize = 19f
+            minHeight = dp(78)
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            minHeight = dp(72)
             background = gradientButton()
-            elevation = dp(5).toFloat()
+            elevation = dp(6).toFloat()
             stateListAnimator = null
-            setOnClickListener { applyAndStart() }
+            setOnClickListener { startFrameGen() }
         }
         root.addView(startButton)
-        addMargin(startButton, bottom = 16)
+        addMargin(startButton!!, bottom = 16)
 
-        // Settings section
         val settingsCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(15), dp(16), dp(16))
             background = rounded(card, line, 20)
         }
-
-        settingsCard.addView(label("2  •  FRAME GENERATION SETTINGS", 13f, uiText, true))
+        settingsCard.addView(label("3  •  FRAME GENERATION SETTINGS", 13f, uiText, true))
 
         val multTitle = label("Frame multiplier", 11f, muted, true)
         settingsCard.addView(multTitle)
@@ -277,7 +358,7 @@ class MainActivity : Activity() {
             )
             setSelection(0)
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                     mult = position + 2
                 }
                 override fun onNothingSelected(parent: AdapterView<*>?) {}
@@ -300,28 +381,21 @@ class MainActivity : Activity() {
             )
             setSelection(1)
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                     quality = listOf(0.5f, 0.67f, 1.0f)[position]
                 }
                 override fun onNothingSelected(parent: AdapterView<*>?) {}
             }
         }
         settingsCard.addView(qSpinner)
-
         root.addView(settingsCard)
         addMargin(settingsCard, bottom = 14)
-
-        // Apply / stop controls
-        val actions = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
 
         val apply = Button(this).apply {
             text = "APPLY SETTINGS"
             textSize = 13f
-            setTextColor(uiText)
             minHeight = dp(54)
+            setTextColor(uiText)
             background = rounded(cardAlt, line, 15)
             stateListAnimator = null
             setOnClickListener {
@@ -332,13 +406,14 @@ class MainActivity : Activity() {
                 ).show()
             }
         }
-        actions.addView(apply, LinearLayout.LayoutParams(0, dp(54), 1f))
+        root.addView(apply)
+        addMargin(apply, bottom = 9)
 
         val stop = Button(this).apply {
-            text = "STOP"
+            text = "STOP FRAMEGEN"
             textSize = 13f
-            setTextColor(red)
             minHeight = dp(54)
+            setTextColor(red)
             background = rounded(Color.rgb(45, 18, 28), Color.rgb(96, 42, 56), 15)
             stateListAnimator = null
             setOnClickListener {
@@ -348,75 +423,128 @@ class MainActivity : Activity() {
                 )
             }
         }
-        val stopParams = LinearLayout.LayoutParams(0, dp(54), 0.55f)
-        stopParams.leftMargin = dp(9)
-        actions.addView(stop, stopParams)
+        root.addView(stop)
+        addMargin(stop, bottom = 14)
 
-        root.addView(actions)
-        addMargin(actions, bottom = 14)
-
-        // Info card
         val info = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(15), dp(14), dp(15), dp(14))
             background = rounded(Color.rgb(9, 20, 34), Color.rgb(26, 47, 72), 18)
         }
-        info.addView(label("HOW IT WORKS", 10f, cyan, true))
+        info.addView(label("STARTUP FLOW", 10f, cyan, true))
         info.addView(label(
-            "Select game → Start FrameGen → choose the game window in Android's capture dialog → " +
-            "10-second warm-up → RIFE neural frame generation.",
+            "Choose game → enable permissions → prepare game capture → START FRAMEGEN → " +
+            "game opens → 10-second AI warm-up → RIFE neural frame generation.",
             11f, muted
         ).also { addMargin(it, top = 6) })
-
         root.addView(info)
 
         setContentView(scroll)
+        refreshReadiness()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshReadiness()
+    }
+
+    private fun isNotificationReady(): Boolean =
+        Build.VERSION.SDK_INT < 33 ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+    private fun refreshReadiness() {
+        val overlayOk = Settings.canDrawOverlays(this)
+        val notificationOk = isNotificationReady()
+        val ready = overlayOk && notificationOk && captureReady && selectedGame != null
+
+        overlayStatus?.let {
+            it.text = if (overlayOk) "● Overlay permission: READY"
+            else "○ Overlay permission: REQUIRED"
+            it.setTextColor(if (overlayOk) green else red)
+        }
+
+        notificationStatus?.let {
+            it.text = if (notificationOk) "● Notifications: READY"
+            else "○ Notifications: REQUIRED"
+            it.setTextColor(if (notificationOk) green else red)
+        }
+
+        captureStatus?.let {
+            it.text = if (captureReady) "● Game capture: READY"
+            else "○ Game capture: REQUIRED"
+            it.setTextColor(if (captureReady) green else red)
+        }
+
+        prepareCaptureButton?.isEnabled =
+            selectedGame != null && overlayOk && notificationOk
+        startButton?.isEnabled = ready
+        startButton?.alpha = if (ready) 1f else 0.45f
     }
 
     private fun findLaunchableGames(): List<GameEntry> {
         val pm = packageManager
-        val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
-            addCategory(Intent.CATEGORY_LAUNCHER)
+        val packages = linkedMapOf<String, ApplicationInfo>()
+
+        fun collect(intent: Intent) {
+            pm.queryIntentActivities(intent, PackageManager.MATCH_ALL).forEach { info ->
+                val app = info.activityInfo.applicationInfo
+                if (app.packageName != packageName) {
+                    packages.putIfAbsent(app.packageName, app)
+                }
+            }
         }
 
-        val resolved = pm.queryIntentActivities(
-            launcherIntent,
-            PackageManager.MATCH_ALL
-        )
+        // Some games advertise CATEGORY_GAME only on their launcher activity.
+        collect(Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_GAME)
+        })
 
-        return resolved
-            .map { it.activityInfo.applicationInfo }
-            .filter { it.packageName != packageName }
-            .filter { it.category == ApplicationInfo.CATEGORY_GAME }
-            .distinctBy { it.packageName }
+        // Other games are only discoverable as normal launcher activities but
+        // mark ApplicationInfo.category as CATEGORY_GAME.
+        collect(Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        })
+
+        return packages.values
+            .filter { app ->
+                app.category == ApplicationInfo.CATEGORY_GAME ||
+                    hasGameCategory(app.packageName)
+            }
             .map {
                 GameEntry(
                     label = pm.getApplicationLabel(it).toString(),
                     packageName = it.packageName
                 )
             }
+            .distinctBy { it.packageName }
             .sortedBy { it.label.lowercase() }
     }
 
-    private fun applyAndStart() {
+    private fun hasGameCategory(packageName: String): Boolean {
+        val intent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_GAME)
+            setPackage(packageName)
+        }
+        return packageManager.queryIntentActivities(
+            intent,
+            PackageManager.MATCH_ALL
+        ).isNotEmpty()
+    }
+
+    private fun prepareGameCapture() {
         val game = selectedGame
         if (game == null) {
             Toast.makeText(this, "Choose a game first.", Toast.LENGTH_LONG).show()
             return
         }
 
-        if (!Settings.canDrawOverlays(this)) {
+        if (!Settings.canDrawOverlays(this) || !isNotificationReady()) {
             Toast.makeText(
                 this,
-                "Allow Display over other apps for FrameGen, then press START FRAMEGEN again.",
+                "Enable the required permissions first.",
                 Toast.LENGTH_LONG
             ).show()
-            startActivity(
-                Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + packageName)
-                )
-            )
+            refreshReadiness()
             return
         }
 
@@ -428,7 +556,7 @@ class MainActivity : Activity() {
 
         Toast.makeText(
             this,
-            game.label + " starting — choose its window in the capture dialog.",
+            "Open " + game.label + " and choose its window for capture.",
             Toast.LENGTH_LONG
         ).show()
 
@@ -437,7 +565,7 @@ class MainActivity : Activity() {
 
         Handler(Looper.getMainLooper()).postDelayed(
             { requestGameCapture() },
-            2000L
+            1800L
         )
     }
 
@@ -450,13 +578,32 @@ class MainActivity : Activity() {
         )
     }
 
-    private fun startCaptureService(
-        resultCode: Int,
-        data: Intent,
-        game: GameEntry
-    ) {
+    private fun startFrameGen() {
+        val game = selectedGame
+        val data = captureData
+        val code = captureCode
+
+        if (game == null || data == null || code == null || !captureReady) {
+            Toast.makeText(
+                this,
+                "Complete the permission and capture setup first.",
+                Toast.LENGTH_LONG
+            ).show()
+            refreshReadiness()
+            return
+        }
+
+        val launchIntent = packageManager.getLaunchIntentForPackage(game.packageName)
+        if (launchIntent == null) {
+            Toast.makeText(this, "Could not launch " + game.label, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(launchIntent)
+
         val serviceIntent = Intent(this, FrameGenService::class.java)
-            .putExtra("code", resultCode)
+            .putExtra("code", code)
             .putExtra("data", data)
             .putExtra("mult", mult)
             .putExtra("quality", quality)
@@ -464,29 +611,49 @@ class MainActivity : Activity() {
             .putExtra("gameName", game.label)
 
         startForegroundService(serviceIntent)
+
         Toast.makeText(
             this,
-            "Capture connected. FrameGen will warm up for 10 seconds, then generate AI frames.",
+            game.label + " started • 10-second AI warm-up",
             Toast.LENGTH_LONG
         ).show()
+
+        captureReady = false
+        captureCode = null
+        captureData = null
+        refreshReadiness()
         moveTaskToBack(true)
     }
 
     @Deprecated("Deprecated in Java")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+    override fun onActivityResult(
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?
+    ) {
         super.onActivityResult(requestCode, resultCode, data)
 
         if (requestCode == reqCapture) {
             if (resultCode == RESULT_OK && data != null) {
-                val game = selectedGame ?: return
-                startCaptureService(resultCode, data, game)
-            } else {
+                captureCode = resultCode
+                captureData = data
+                captureReady = true
                 Toast.makeText(
                     this,
-                    "Screen capture was cancelled. FrameGen did not start.",
+                    "Game capture READY. START FRAMEGEN is unlocked.",
+                    Toast.LENGTH_LONG
+                ).show()
+            } else {
+                captureCode = null
+                captureData = null
+                captureReady = false
+                Toast.makeText(
+                    this,
+                    "Screen capture cancelled.",
                     Toast.LENGTH_LONG
                 ).show()
             }
+            refreshReadiness()
         }
     }
 }
