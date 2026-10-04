@@ -36,7 +36,8 @@ class FrameGenRenderer(
     private val dpi: Int,
     private val refreshHz: Float,
     private val modelDirectory: String,
-    private val onBufferSize: (Int, Int) -> Unit
+    private val onBufferSize: (Int, Int) -> Unit,
+    private val onStats: (inputFps: Int, outputFps: Int, aiFps: Int) -> Unit
 ) : Thread("FrameGen-AI") {
 
     companion object {
@@ -197,6 +198,11 @@ void main() {
     private var generatedPixels: ByteBuffer? = null
     private var aiReady = false
 
+    private var statsWindowStartNs = System.nanoTime()
+    private var statsInputFrames = 0
+    private var statsOutputFrames = 0
+    private var statsAiFrames = 0
+
     fun requestResize(nw: Int, nh: Int) { pending = intArrayOf(nw, nh) }
 
     fun shutdown() {
@@ -233,6 +239,7 @@ void main() {
             s.updateTexImage()
             s.getTransformMatrix(stMtx)
             val now = System.nanoTime()
+            statsInputFrames++
 
             drawOes(cur)
 
@@ -256,7 +263,7 @@ void main() {
 
                 if (effectiveMultiplier <= 1) {
                     drawBlit(tex[cur])
-                    EGL14.eglSwapBuffers(dpy, surf)
+                    present()
                 } else {
                     val step = interval / effectiveMultiplier
                     val base = System.nanoTime()
@@ -282,6 +289,7 @@ void main() {
                                 uploadAiFrame()
                                 drawBlit(aiTex)
                                 generatedAny = true
+                                statsAiFrames++
                             } else {
                                 // Never present a shader-generated frame as AI.
                                 Log.e(TAG, "RIFE inference failed at t=" + (k.toFloat() / effectiveMultiplier))
@@ -289,20 +297,20 @@ void main() {
                             }
 
                             sleepUntil(base + k * step)
-                            EGL14.eglSwapBuffers(dpy, surf)
+                            present()
                         }
                     } else {
                         motion(1 - cur, cur)
                         for (k in 1 until effectiveMultiplier) {
                             drawInterp(1 - cur, cur, k.toFloat() / effectiveMultiplier)
                             sleepUntil(base + k * step)
-                            EGL14.eglSwapBuffers(dpy, surf)
+                            present()
                         }
                     }
 
                     drawBlit(tex[cur])
                     sleepUntil(base + effectiveMultiplier * step)
-                    EGL14.eglSwapBuffers(dpy, surf)
+                    present()
 
                     if (generatedAny) {
                         // Keep the real current frame as the anchor for the next pair.
@@ -310,7 +318,7 @@ void main() {
                 }
             } else {
                 drawBlit(tex[cur])
-                EGL14.eglSwapBuffers(dpy, surf)
+                present()
                 havePrev = true
             }
 
@@ -325,7 +333,31 @@ void main() {
         }
     }
 
-    private fun sleepUntil(t: Long) {
+    private fun present() {
+        if (EGL14.eglSwapBuffers(dpy, surf)) {
+            statsOutputFrames++
+        }
+        publishStatsIfDue()
+    }
+
+    private fun publishStatsIfDue() {
+        val now = System.nanoTime()
+        val elapsed = now - statsWindowStartNs
+        if (elapsed < 500_000_000L) return
+
+        val seconds = elapsed.toDouble() / 1_000_000_000.0
+        val inFps = kotlin.math.round(statsInputFrames / seconds).toInt()
+        val outFps = kotlin.math.round(statsOutputFrames / seconds).toInt()
+        val aiFps = kotlin.math.round(statsAiFrames / seconds).toInt()
+
+        onStats(inFps, outFps, aiFps)
+
+        statsWindowStartNs = now
+        statsInputFrames = 0
+        statsOutputFrames = 0
+        statsAiFrames = 0
+    }
+
         while (true) {
             val d = t - System.nanoTime()
             if (d <= 0) return
@@ -576,6 +608,9 @@ void main() {
         try { ai?.close() } catch (_: Throwable) {}
         ai = null
         aiReady = false
+        statsInputFrames = 0
+        statsOutputFrames = 0
+        statsAiFrames = 0
         previousPixels = null
         currentPixels = null
         generatedPixels = null
