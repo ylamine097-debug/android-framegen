@@ -22,6 +22,7 @@
 namespace {
 
 struct Engine {
+    bool gpuInstanceCreated = false;
     std::unique_ptr<RIFE> rife;
     int width = 0;
     int height = 0;
@@ -176,6 +177,13 @@ Java_dev_framegen_AiFrameGenerator_nativeCreate(
     std::string modelDir(modelChars);
     env->ReleaseStringUTFChars(jModelDirectory, modelChars);
 
+    // NCNN's Vulkan GPU enumeration requires an explicit process-level
+    // GPU instance before get_gpu_count/get_default_gpu_index are reliable.
+    if (ncnn::create_gpu_instance() != 0) {
+        LOGE("ncnn::create_gpu_instance failed");
+        return 0;
+    }
+
     int requestedGpu = static_cast<int>(gpuIndex);
     if (requestedGpu == -2) {
         requestedGpu = ncnn::get_gpu_count() > 0
@@ -184,6 +192,7 @@ Java_dev_framegen_AiFrameGenerator_nativeCreate(
     }
 
     auto engine = std::make_unique<Engine>();
+    engine->gpuInstanceCreated = true;
     int cpuThreads = static_cast<int>(std::thread::hardware_concurrency());
     if (cpuThreads <= 0) cpuThreads = 4;
     // RIFE's num_threads controls its CPU helper threads. Keep it modest so the
@@ -202,6 +211,9 @@ Java_dev_framegen_AiFrameGenerator_nativeCreate(
 
     if (engine->rife->load(modelDir) != 0) {
         LOGE("RIFE model load failed: %s", modelDir.c_str());
+        if (engine->gpuInstanceCreated) {
+            ncnn::destroy_gpu_instance();
+        }
         return 0;
     }
 
@@ -356,5 +368,10 @@ Java_dev_framegen_AiFrameGenerator_nativeRelease(
     jlong handle
 ) {
     auto* engine = reinterpret_cast<Engine*>(handle);
+    if (!engine) return;
+    const bool destroyGpu = engine->gpuInstanceCreated;
     delete engine;
+    if (destroyGpu) {
+        ncnn::destroy_gpu_instance();
+    }
 }
