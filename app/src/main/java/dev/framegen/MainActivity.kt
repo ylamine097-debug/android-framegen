@@ -3,83 +3,121 @@ package dev.framegen
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.LinearLayout
-import android.widget.RadioButton
-import android.widget.RadioGroup
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+
+data class GameEntry(
+    val label: String,
+    val packageName: String
+)
 
 class MainActivity : Activity() {
     private val reqCapture = 42
     private var mult = 2
     private var quality = 0.5f
+    private var selectedGame: GameEntry? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
-        }
-
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(56, 72, 56, 56)
+            setPadding(48, 64, 48, 48)
         }
 
         fun label(t: String, size: Float = 16f) = TextView(this).apply {
             text = t
             textSize = size
-            setPadding(0, 18, 0, 8)
+            setPadding(0, 16, 0, 8)
         }
 
-        root.addView(label("FrameGen — Game Mode", 28f))
+        root.addView(label("FrameGen — Choose Game", 28f))
         root.addView(label(
-            "Real-time frame interpolation for Android 14+ games.\n\n" +
-            "1. Choose your frame multiplier.\n" +
-            "2. Choose processing quality.\n" +
-            "3. Press APPLY & START FRAMEGEN.\n" +
-            "4. In Android's capture dialog, choose \"A single app\" and select your game."
+            "Select the game first. FrameGen will only start after the selected game is opened. " +
+            "After Android capture permission is approved, the game gets launched and FrameGen waits 10 seconds before processing."
         ))
 
-        root.addView(label("Frame multiplier"))
-        val multGroup = RadioGroup(this).apply { orientation = RadioGroup.HORIZONTAL }
-        for ((i, value) in listOf(2, 3, 4).withIndex()) {
-            multGroup.addView(RadioButton(this).apply {
-                text = value.toString() + "X"
-                id = 100 + i
-                isChecked = (value == 2)
-            })
-        }
-        multGroup.setOnCheckedChangeListener { _, id ->
-            if (id in 100..102) mult = listOf(2, 3, 4)[id - 100]
-        }
-        root.addView(multGroup)
+        root.addView(label("1. Choose your game"))
+        val games = findLaunchableGames()
+        if (games.isEmpty()) {
+            root.addView(label("No launchable games/apps were found on this device.", 13f))
+        } else {
+            val spinner = Spinner(this)
+            val names = games.map { it.label }
+            spinner.adapter = ArrayAdapter(
+                this,
+                android.R.layout.simple_spinner_dropdown_item,
+                names
+            )
+            spinner.setSelection(0)
+            selectedGame = games[0]
+            spinner.setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(
+                    parent: android.widget.AdapterView<*>?,
+                    view: android.view.View?,
+                    position: Int,
+                    id: Long
+                ) {
+                    selectedGame = games.getOrNull(position)
+                }
 
-        root.addView(label("Processing resolution"))
-        val qGroup = RadioGroup(this).apply { orientation = RadioGroup.HORIZONTAL }
-        val qs = listOf("Fast" to 0.5f, "Balanced" to 0.67f, "Sharp" to 1.0f)
-        for ((i, q) in qs.withIndex()) {
-            qGroup.addView(RadioButton(this).apply {
-                text = q.first
-                id = 200 + i
-                isChecked = (i == 0)
+                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {
+                    selectedGame = null
+                }
             })
+            root.addView(spinner)
+            root.addView(label(
+                "Selected package: " + (selectedGame?.packageName ?: "none"),
+                11f
+            ))
         }
-        qGroup.setOnCheckedChangeListener { _, id ->
-            if (id in 200..202) quality = qs[id - 200].second
-        }
-        root.addView(qGroup)
+
+        root.addView(label("2. Frame multiplier"))
+        val multSpinner = Spinner(this)
+        multSpinner.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            listOf("2X — recommended", "3X", "4X")
+        )
+        multSpinner.setSelection(0)
+        multSpinner.setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                mult = position + 2
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        })
+        root.addView(multSpinner)
+
+        root.addView(label("3. Processing resolution"))
+        val qSpinner = Spinner(this)
+        qSpinner.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            listOf("Fast — 50%", "Balanced — 67%", "Sharp — 100%")
+        )
+        qSpinner.setSelection(0)
+        qSpinner.setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                quality = listOf(0.5f, 0.67f, 1.0f)[position]
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        })
+        root.addView(qSpinner)
 
         root.addView(Button(this).apply {
             text = "APPLY & START FRAMEGEN"
-            setOnClickListener { startFrameGen() }
+            setOnClickListener { applyAndStart() }
         })
 
         root.addView(Button(this).apply {
@@ -93,16 +131,51 @@ class MainActivity : Activity() {
         })
 
         root.addView(label(
-            "Compatibility: Vulkan/OpenGL ES games that Android allows MediaProjection to capture. " +
-            "Games using secure/protected rendering may not be capturable.",
-            12f
-        ))
+            "Recommended flow: select the game → Apply & Start → allow overlay → allow Android screen capture → " +
+            "the selected game opens → 10-second warm-up → FrameGen starts."
+        , 12f))
 
         root.gravity = Gravity.TOP
         setContentView(root)
     }
 
-    private fun startFrameGen() {
+    private fun findLaunchableGames(): List<GameEntry> {
+        val pm = packageManager
+        val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+
+        val resolved = pm.queryIntentActivities(
+            launcherIntent,
+            PackageManager.MATCH_ALL
+        )
+
+        val entries = resolved
+            .map { it.activityInfo.applicationInfo }
+            .filter { it.packageName != packageName }
+            .distinctBy { it.packageName }
+            .map {
+                GameEntry(
+                    label = pm.getApplicationLabel(it).toString(),
+                    packageName = it.packageName
+                ) to (it.category == ApplicationInfo.CATEGORY_GAME)
+            }
+            .sortedWith(
+                compareByDescending<Pair<GameEntry, Boolean>> { it.second }
+                    .thenBy { it.first.label.lowercase() }
+            )
+            .map { it.first }
+
+        return entries
+    }
+
+    private fun applyAndStart() {
+        val game = selectedGame
+        if (game == null) {
+            Toast.makeText(this, "Choose a game first.", Toast.LENGTH_LONG).show()
+            return
+        }
+
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(
                 this,
@@ -118,9 +191,45 @@ class MainActivity : Activity() {
             return
         }
 
+        // Android requires user consent for every MediaProjection capture session.
         val mpm = getSystemService(MediaProjectionManager::class.java)
         @Suppress("DEPRECATION")
         startActivityForResult(mpm.createScreenCaptureIntent(), reqCapture)
+    }
+
+    private fun launchGameThenStartCaptureService(
+        resultCode: Int,
+        data: Intent,
+        game: GameEntry
+    ) {
+        val launchIntent = packageManager.getLaunchIntentForPackage(game.packageName)
+        if (launchIntent == null) {
+            Toast.makeText(this, "Could not launch " + game.label, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        Toast.makeText(
+            this,
+            game.label + " starting — FrameGen will begin after 10 seconds.",
+            Toast.LENGTH_LONG
+        ).show()
+
+        // Open the game immediately after capture permission.
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(launchIntent)
+
+        // Start the foreground service immediately, but keep the actual capture/
+        // interpolation pipeline stopped for the requested 10-second warm-up.
+        val serviceIntent = Intent(this, FrameGenService::class.java)
+            .putExtra("code", resultCode)
+            .putExtra("data", data)
+            .putExtra("mult", mult)
+            .putExtra("quality", quality)
+            .putExtra("delayMs", 10_000L)
+            .putExtra("gameName", game.label)
+
+        startForegroundService(serviceIntent)
+        moveTaskToBack(true)
     }
 
     @Deprecated("Deprecated in Java")
@@ -128,15 +237,8 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
 
         if (requestCode == reqCapture && resultCode == RESULT_OK && data != null) {
-            val serviceIntent = Intent(this, FrameGenService::class.java)
-                .putExtra("code", resultCode)
-                .putExtra("data", data)
-                .putExtra("mult", mult)
-                .putExtra("quality", quality)
-
-            startForegroundService(serviceIntent)
-            Toast.makeText(this, "FrameGen starting…", Toast.LENGTH_SHORT).show()
-            moveTaskToBack(true)
+            val game = selectedGame ?: return
+            launchGameThenStartCaptureService(resultCode, data, game)
         }
     }
 }
