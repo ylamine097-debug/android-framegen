@@ -177,8 +177,9 @@ Java_dev_framegen_AiFrameGenerator_nativeCreate(
     std::string modelDir(modelChars);
     env->ReleaseStringUTFChars(jModelDirectory, modelChars);
 
-    // NCNN's Vulkan GPU enumeration requires an explicit process-level
-    // GPU instance before get_gpu_count/get_default_gpu_index are reliable.
+    // Create the Vulkan instance before querying the mobile GPU. This is
+    // required by NCNN's Vulkan backend and prevents a CPU/invalid-device
+    // fallback that can leave RIFE uninitialized.
     if (ncnn::create_gpu_instance() != 0) {
         LOGE("ncnn::create_gpu_instance failed");
         return 0;
