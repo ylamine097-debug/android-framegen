@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FrameGen</string>
+    <string name="accessibility_service_label">FrameGen Touch Bridge</string>
+    <string name="accessibility_service_description">Provides a trusted, touch-through rendering overlay for FrameGen game frame generation.</string>
+</resources>
