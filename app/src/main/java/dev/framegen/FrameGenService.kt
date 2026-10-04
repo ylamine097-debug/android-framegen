@@ -20,8 +20,22 @@ import android.view.SurfaceView
 import android.view.WindowManager
 import android.widget.Toast
 
-fun scaledDims(w: Int, h: Int, q: Float): Pair<Int, Int> =
-    Pair(((w * q).toInt() / 16 * 16).coerceAtLeast(64), ((h * q).toInt() / 16 * 16).coerceAtLeast(64))
+fun scaledDims(w: Int, h: Int, q: Float): Pair<Int, Int> {
+    // Bound neural inference to practical flagship-mobile budgets.
+    val maxPixels = when {
+        q <= 0.5f -> 1280L * 720L
+        q <= 0.67f -> 1600L * 900L
+        else -> 1920L * 1080L
+    }
+    val sourcePixels = w.toLong() * h.toLong()
+    val scale = minOf(
+        q.toDouble(),
+        kotlin.math.sqrt(maxPixels.toDouble() / sourcePixels.coerceAtLeast(1L))
+    )
+    val nw = ((w * scale).toInt() / 16 * 16).coerceAtLeast(64)
+    val nh = ((h * scale).toInt() / 16 * 16).coerceAtLeast(64)
+    return Pair(nw, nh)
+}
 
 class FrameGenService : Service() {
     companion object {
@@ -162,7 +176,7 @@ class FrameGenService : Service() {
             modelDirectory = modelDir
 
             setupOverlay(mp)
-            updateNotification("AI FrameGen active • " + gameName)
+            updateNotification("RIFE AI FrameGen active • " + gameName)
         } catch (e: Exception) {
             Toast.makeText(
                 this,
