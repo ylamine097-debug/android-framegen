@@ -14,6 +14,7 @@ import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.hardware.display.DisplayManager
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.WindowManager
@@ -83,13 +84,15 @@ class FrameGenService : Service() {
         val b = wm.maximumWindowMetrics.bounds
         val (cw, ch) = scaledDims(b.width(), b.height(), quality)
         val dpi = resources.displayMetrics.densityDpi
+        val refreshHz = getSystemService(DisplayManager::class.java)
+            .getDisplay(android.view.Display.DEFAULT_DISPLAY)?.refreshRate?.coerceAtLeast(60f) ?: 60f
 
         val sv = SurfaceView(this)
         sv.holder.setFixedSize(cw, ch)
         sv.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 if (renderer == null) {
-                    renderer = FrameGenRenderer(holder.surface, mp, mult, cw, ch, dpi) { w, h ->
+                    renderer = FrameGenRenderer(holder.surface, mp, mult, cw, ch, dpi, refreshHz) { w, h ->
                         main.post { overlay?.holder?.setFixedSize(w, h) }
                     }.also { it.start() }
                 }
@@ -106,7 +109,7 @@ class FrameGenService : Service() {
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
+            PixelFormat.OPAQUE
         )
         p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
         lp = p
