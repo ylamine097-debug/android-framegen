@@ -36,34 +36,38 @@ class MainActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(48, 64, 48, 48)
+            setPadding(40, 48, 40, 40)
         }
 
         fun label(t: String, size: Float = 16f) = TextView(this).apply {
             text = t
             textSize = size
-            setPadding(0, 16, 0, 8)
+            setPadding(0, 12, 0, 8)
         }
 
-        root.addView(label("FrameGen — Neural AI", 28f))
+        root.addView(label("FrameGen — Neural AI", 27f))
         root.addView(label(
-            "Select the game first. FrameGen uses a real neural frame-interpolation model (RIFE v4.6) running locally through Vulkan/NCNN. " +
-            "After the game opens, Android asks you to choose that game window for capture. FrameGen then waits 10 seconds before processing."
+            "Choose a game, apply your settings, then press START FRAMEGEN. " +
+            "The selected game opens, Android asks you to choose its window, and the AI starts after the 10-second warm-up.",
+            14f
         ))
 
-        root.addView(label("1. Choose your game"))
+        root.addView(label("1. CHOOSE GAME", 16f))
         val games = findLaunchableGames()
+
         if (games.isEmpty()) {
             root.addView(label("No launchable games/apps were found on this device.", 13f))
         } else {
-            val spinner = Spinner(this)
-            val names = games.map { it.label }
-            spinner.adapter = ArrayAdapter(
-                this,
-                android.R.layout.simple_spinner_dropdown_item,
-                names
-            )
-            spinner.setSelection(0)
+            val spinner = Spinner(this).apply {
+                minimumHeight = 56
+                adapter = ArrayAdapter(
+                    this@MainActivity,
+                    android.R.layout.simple_spinner_dropdown_item,
+                    games.map { it.label }
+                )
+                setSelection(0)
+            }
+
             selectedGame = games[0]
             spinner.setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(
@@ -79,47 +83,71 @@ class MainActivity : Activity() {
                     selectedGame = null
                 }
             })
+
             root.addView(spinner)
-            root.addView(label(
-                "Selected package: " + (selectedGame?.packageName ?: "none"),
-                11f
-            ))
         }
 
-        root.addView(label("2. Frame multiplier"))
-        val multSpinner = Spinner(this)
-        multSpinner.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            listOf("2X — recommended", "3X", "4X")
-        )
-        multSpinner.setSelection(0)
+        // Prominent start button: kept immediately after the game picker so it
+        // remains visible on small screens and is impossible to miss.
+        val startButton = Button(this).apply {
+            text = "START FRAMEGEN"
+            textSize = 18f
+            minHeight = 72
+            setOnClickListener { applyAndStart() }
+        }
+        root.addView(startButton)
+
+        root.addView(label("2. FRAME MULTIPLIER", 16f))
+        val multSpinner = Spinner(this).apply {
+            minimumHeight = 56
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                listOf("2X — Recommended", "3X", "4X")
+            )
+            setSelection(0)
+        }
         multSpinner.setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?,
+                view: android.view.View?,
+                position: Int,
+                id: Long
+            ) {
                 mult = position + 2
             }
+
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         })
         root.addView(multSpinner)
 
-        root.addView(label("3. AI processing resolution"))
-        val qSpinner = Spinner(this)
-        qSpinner.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            listOf("Fast", "Balanced", "Sharp")
-        )
-        qSpinner.setSelection(0)
+        root.addView(label("3. AI PROCESSING QUALITY", 16f))
+        val qSpinner = Spinner(this).apply {
+            minimumHeight = 56
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                listOf("Fast", "Balanced", "Sharp")
+            )
+            setSelection(1)
+        }
         qSpinner.setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?,
+                view: android.view.View?,
+                position: Int,
+                id: Long
+            ) {
                 quality = listOf(0.5f, 0.67f, 1.0f)[position]
             }
+
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
         })
         root.addView(qSpinner)
 
         root.addView(Button(this).apply {
             text = "APPLY SETTINGS"
+            minHeight = 60
             setOnClickListener {
                 Toast.makeText(
                     this@MainActivity,
@@ -130,12 +158,8 @@ class MainActivity : Activity() {
         })
 
         root.addView(Button(this).apply {
-            text = "START FRAMEGEN"
-            setOnClickListener { applyAndStart() }
-        })
-
-        root.addView(Button(this).apply {
             text = "STOP FRAMEGEN"
+            minHeight = 60
             setOnClickListener {
                 startService(
                     Intent(this@MainActivity, FrameGenService::class.java)
@@ -145,8 +169,10 @@ class MainActivity : Activity() {
         })
 
         root.addView(label(
-            "Flow: select game → Apply Settings → Start FrameGen → game opens → choose the game window → 10-second AI warm-up → FrameGen starts."
-        , 12f))
+            "Flow: choose game → START FRAMEGEN → Android capture permission → " +
+            "game window → 10-second AI warm-up → RIFE neural frame generation.",
+            12f
+        ))
 
         root.gravity = Gravity.TOP
         setContentView(root)
