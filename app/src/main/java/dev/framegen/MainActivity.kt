@@ -209,7 +209,7 @@ class MainActivity : Activity() {
 
         if (games.isEmpty()) {
             gameSpinner.isEnabled = false
-            gameCard.addView(label("No launchable games/apps found.", 13f, red))
+            gameCard.addView(label("No games detected. Only apps categorized by Android as games are shown.", 13f, red))
         } else {
             selectedGame = games[0]
             gameSpinner.setSelection(0)
@@ -387,18 +387,15 @@ class MainActivity : Activity() {
         return resolved
             .map { it.activityInfo.applicationInfo }
             .filter { it.packageName != packageName }
+            .filter { it.category == ApplicationInfo.CATEGORY_GAME }
             .distinctBy { it.packageName }
             .map {
                 GameEntry(
                     label = pm.getApplicationLabel(it).toString(),
                     packageName = it.packageName
-                ) to (it.category == ApplicationInfo.CATEGORY_GAME)
+                )
             }
-            .sortedWith(
-                compareByDescending<Pair<GameEntry, Boolean>> { it.second }
-                    .thenBy { it.first.label.lowercase() }
-            )
-            .map { it.first }
+            .sortedBy { it.label.lowercase() }
     }
 
     private fun applyAndStart() {
