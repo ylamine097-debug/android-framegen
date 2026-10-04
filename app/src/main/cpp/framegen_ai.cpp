@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <thread>
 
 #include "rife.h"
 #include "gpu.h"
@@ -84,12 +85,16 @@ Java_dev_framegen_AiFrameGenerator_nativeCreate(
     }
 
     auto engine = std::make_unique<Engine>();
+    int cpuThreads = static_cast<int>(std::thread::hardware_concurrency());
+    if (cpuThreads <= 0) cpuThreads = 4;
+    cpuThreads = std::clamp(cpuThreads, 2, 6);
+
     engine->rife = std::make_unique<RIFE>(
         requestedGpu,
         false,
         false,
         false,
-        1,
+        cpuThreads,
         false,
         true
     );
@@ -99,7 +104,7 @@ Java_dev_framegen_AiFrameGenerator_nativeCreate(
         return 0;
     }
 
-    LOGI("RIFE v4.6 neural backend initialized on GPU %d", requestedGpu);
+    LOGI("RIFE v4.6 neural backend initialized on Vulkan GPU %d with %d CPU helper threads", requestedGpu, cpuThreads);
     return reinterpret_cast<jlong>(engine.release());
 }
 
