@@ -456,7 +456,7 @@ class MainActivity : Activity() {
         ).any {
             val info = it.resolveInfo?.serviceInfo
             info?.packageName == packageName &&
-                info.name == FrameGenAccessibilityService::class.java.name
+                info?.name == FrameGenAccessibilityService::class.java.name
         }
     }
 
