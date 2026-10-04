@@ -322,13 +322,10 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
 
     // Convert RIFE's planar output back to tightly packed RGB before
     // applying luminance correction and returning RGBA to Kotlin.
-    if (outimage.to_pixels(
-            engine->rgbOut.data(),
-            ncnn::Mat::PIXEL_RGB
-        ) != 0) {
-        LOGE("RIFE output conversion failed");
-        return -3;
-    }
+    outimage.to_pixels(
+        engine->rgbOut.data(),
+        ncnn::Mat::PIXEL_RGB
+    );
 
     match_luminance(
         engine->rgbOut.data(),
