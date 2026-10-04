@@ -41,7 +41,7 @@ class MainActivity : Activity() {
     private val card = Color.rgb(14, 25, 43)
     private val cardAlt = Color.rgb(18, 32, 53)
     private val line = Color.rgb(38, 57, 82)
-    private val text = Color.rgb(244, 248, 255)
+    private val uiText = Color.rgb(244, 248, 255)
     private val muted = Color.rgb(142, 160, 187)
     private val purple = Color.rgb(124, 92, 255)
     private val blue = Color.rgb(76, 126, 255)
@@ -76,7 +76,7 @@ class MainActivity : Activity() {
     private fun label(
         value: String,
         size: Float = 14f,
-        color: Int = text,
+        color: Int = uiText,
         bold: Boolean = false
     ): TextView {
         return TextView(this).apply {
@@ -133,7 +133,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), 0, 0, 0)
         }
-        titleBox.addView(label("FRAMEGEN", 22f, text, true))
+        titleBox.addView(label("FRAMEGEN", 22f, uiText, true))
         titleBox.addView(label("NEURAL AI FRAME GENERATION", 10f, cyan, true))
         header.addView(titleBox, LinearLayout.LayoutParams(0, -2, 1f))
 
@@ -320,7 +320,7 @@ class MainActivity : Activity() {
         val apply = Button(this).apply {
             text = "APPLY SETTINGS"
             textSize = 13f
-            setTextColor(text)
+            setTextColor(uiText)
             minHeight = dp(54)
             background = rounded(cardAlt, line, 15)
             stateListAnimator = null
