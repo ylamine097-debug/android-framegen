@@ -12,8 +12,12 @@ android {
         applicationId = "dev.framegen"
         minSdk = 34
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2-ai"
+        versionCode = 3
+        versionName = "0.3-ai"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
 
         externalNativeBuild {
             cmake {
