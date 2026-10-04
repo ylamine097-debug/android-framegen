@@ -5,6 +5,7 @@ import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.projection.MediaProjection
 import android.opengl.EGL14
+import android.opengl.EGLExt
 import android.opengl.EGLConfig
 import android.opengl.EGLContext
 import android.opengl.EGLDisplay
@@ -71,6 +72,42 @@ uniform sampler2D uTex;
 in vec2 vUv;
 out vec4 o;
 void main() { o = vec4(texture(uTex, vUv).rgb, 1.0); }"""
+
+        // Blend a small amount of the latest real frame into the neural frame.
+        // This suppresses RIFE grain and unstable edge ringing without turning
+        // the result into simple frame duplication.
+        private const val FS_AI_STABLE = """
+#version 300 es
+precision highp float;
+uniform sampler2D uAI;
+uniform sampler2D uReal;
+in vec2 vUv;
+out vec4 o;
+
+float luma(vec3 c) {
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+void main() {
+    vec3 ai = texture(uAI, vUv).rgb;
+    vec3 real = texture(uReal, vUv).rgb;
+
+    float aiY = luma(ai);
+    float realY = luma(real);
+
+    // Gentle local luminance alignment. Keep the correction tight so genuine
+    // scene lighting changes are preserved.
+    float gain = clamp((realY + 0.025) / (aiY + 0.025), 0.90, 1.12);
+    ai = clamp(ai * gain, 0.0, 1.0);
+
+    // A small real-frame anchor reduces visible neural noise/tearing.
+    vec3 result = mix(ai, real, 0.055);
+
+    // Tiny midtone lift prevents mobile compositor black crush.
+    result = clamp(pow(max(result, vec3(0.0)), vec3(0.985)), 0.0, 1.0);
+
+    o = vec4(result, 1.0);
+}"""
 
         // One fragment = one 16x16 block. Sparse 4x4 SAD, coarse (+-24px) then fine (+-2px) search.
         private const val FS_ME = """
@@ -170,6 +207,7 @@ void main() {
     }
 
     @Volatile private var running = true
+    @Volatile private var paused = false
     @Volatile private var pending: IntArray? = null
     private val frameSem = Semaphore(0)
 
@@ -177,7 +215,7 @@ void main() {
     private var ctx: EGLContext = EGL14.EGL_NO_CONTEXT
     private var surf: EGLSurface = EGL14.EGL_NO_SURFACE
 
-    private var pOes = 0; private var pBlit = 0; private var pMe = 0; private var pInterp = 0
+    private var pOes = 0; private var pBlit = 0; private var pAiStable = 0; private var pMe = 0; private var pInterp = 0
     private var oesTex = 0
     private var st: SurfaceTexture? = null
     private var stSurface: Surface? = null
@@ -208,6 +246,11 @@ void main() {
 
     fun requestResize(nw: Int, nh: Int) { pending = intArrayOf(nw, nh) }
 
+    fun setPaused(value: Boolean) {
+        paused = value
+        if (!value) frameSem.release()
+    }
+
     fun shutdown() {
         running = false
         interrupt()
@@ -235,6 +278,11 @@ void main() {
         var lastT = 0L
 
         while (running) {
+            if (paused) {
+                Thread.sleep(16)
+                continue
+            }
+
             if (applyResize()) havePrev = false
             if (!frameSem.tryAcquire(50, TimeUnit.MILLISECONDS)) continue
             frameSem.drainPermits()
@@ -293,7 +341,7 @@ void main() {
 
                             if (ok) {
                                 uploadAiFrame()
-                                drawBlit(aiTex)
+                                drawAiStable(aiTex, tex[cur])
                                 generatedAny = true
                                 statsAiFrames++
                             } else {
@@ -342,6 +390,16 @@ void main() {
     }
 
     private fun present() {
+        try {
+            EGLExt.eglPresentationTimeANDROID(
+                dpy,
+                surf,
+                System.nanoTime()
+            )
+        } catch (_: Throwable) {
+            // Optional EGL extension; normal eglSwapBuffers still works.
+        }
+
         if (EGL14.eglSwapBuffers(dpy, surf)) {
             statsOutputFrames++
         }
@@ -434,6 +492,16 @@ void main() {
         quad()
     }
 
+    private fun drawAiStable(aiTexture: Int, realTexture: Int) {
+        bindTarget(0, w, h)
+        GLES30.glUseProgram(pAiStable)
+        bindTex(0, aiTexture)
+        bindTex(1, realTexture)
+        GLES30.glUniform1i(loc(pAiStable, "uAI"), 0)
+        GLES30.glUniform1i(loc(pAiStable, "uReal"), 1)
+        quad()
+    }
+
     private fun drawBlit(t: Int) {
         bindTarget(0, w, h)
         GLES30.glUseProgram(pBlit)
@@ -463,7 +531,11 @@ void main() {
     }
 
     private fun initGl() {
-        pOes = program(FS_OES); pBlit = program(FS_BLIT); pMe = program(FS_ME); pInterp = program(FS_INTERP)
+        pOes = program(FS_OES)
+        pBlit = program(FS_BLIT)
+        pAiStable = program(FS_AI_STABLE)
+        pMe = program(FS_ME)
+        pInterp = program(FS_INTERP)
 
         val t = IntArray(1)
         GLES30.glGenTextures(1, t, 0)
