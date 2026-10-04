@@ -507,7 +507,7 @@ class MainActivity : Activity() {
 
         return packages.values
             .filter { app ->
-                app.category == ApplicationInfo.CATEGORY_GAME ||
+                app.category == 0 ||
                     hasGameCategory(app.packageName) ||
                     // Some older/ported games still expose the legacy game flag.
                     (app.flags and ApplicationInfo.FLAG_IS_GAME) != 0
