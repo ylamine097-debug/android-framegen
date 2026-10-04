@@ -62,8 +62,11 @@ class FrameGenService : Service() {
         }
 
         override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
-            // Intentionally ignored; the generated overlay is expected to
-            // occlude the captured game window.
+            // When Android temporarily hides the captured game (for example
+            // behind system UI), hide/pause only the visual overlay. Keep the
+            // MediaProjection service alive so FrameGen can resume when the
+            // game becomes visible again.
+            FrameGenAccessibilityService.setFrameGenOverlayVisible(isVisible)
         }
     }
 
