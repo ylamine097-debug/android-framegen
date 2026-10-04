@@ -1,10 +1,12 @@
 package dev.framegen
 
 import android.Manifest
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.view.accessibility.AccessibilityManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -44,7 +46,7 @@ class MainActivity : Activity() {
     private var captureReady = false
 
     private var startButton: Button? = null
-    private var overlayStatus: TextView? = null
+    private var touchBridgeStatus: TextView? = null
     private var notificationStatus: TextView? = null
     private var captureStatus: TextView? = null
     private var prepareCaptureButton: Button? = null
@@ -258,35 +260,30 @@ class MainActivity : Activity() {
         }
         permissionCard.addView(label("2  •  PERMISSIONS & CAPTURE", 13f, uiText, true))
         permissionCard.addView(label(
-            "Enable overlay + notifications, then authorize the game-window capture before START FRAMEGEN unlocks.",
+            "Enable the Touch Bridge + notifications, then authorize game-window capture before START FRAMEGEN unlocks.",
             11f, muted
         ).also { addMargin(it, top = 3, bottom = 8) })
 
-        overlayStatus = label("", 12f)
+        touchBridgeStatus = label("", 12f)
         notificationStatus = label("", 12f)
         captureStatus = label("", 12f)
-        permissionCard.addView(overlayStatus)
+        permissionCard.addView(touchBridgeStatus)
         permissionCard.addView(notificationStatus)
         permissionCard.addView(captureStatus)
 
-        val enableOverlay = Button(this).apply {
-            text = "ENABLE OVERLAY PERMISSION"
+        val enableTouchBridge = Button(this).apply {
+            text = "ENABLE TOUCH BRIDGE"
             textSize = 12f
             minHeight = dp(50)
             setTextColor(uiText)
             background = rounded(cardAlt, line, 15)
             stateListAnimator = null
             setOnClickListener {
-                startActivity(
-                    Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:" + packageName)
-                    )
-                )
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
         }
-        permissionCard.addView(enableOverlay)
-        addMargin(enableOverlay, top = 7)
+        permissionCard.addView(enableTouchBridge)
+        addMargin(enableTouchBridge, top = 7)
 
         val enableNotifications = Button(this).apply {
             text = "ENABLE NOTIFICATIONS"
@@ -452,15 +449,29 @@ class MainActivity : Activity() {
         Build.VERSION.SDK_INT < 33 ||
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
-    private fun refreshReadiness() {
-        val overlayOk = Settings.canDrawOverlays(this)
-        val notificationOk = isNotificationReady()
-        val ready = overlayOk && notificationOk && captureReady && selectedGame != null
+    private fun isTouchBridgeReady(): Boolean {
+        val manager = getSystemService(AccessibilityManager::class.java)
+        return manager.getEnabledAccessibilityServiceList(
+            AccessibilityServiceInfo.FEEDBACK_GENERIC
+        ).any {
+            val info = it.resolveInfo?.serviceInfo
+            info?.packageName == packageName &&
+                info.name == FrameGenAccessibilityService::class.java.name
+        }
+    }
 
-        overlayStatus?.let {
-            it.text = if (overlayOk) "● Overlay permission: READY"
-            else "○ Overlay permission: REQUIRED"
-            it.setTextColor(if (overlayOk) green else red)
+    private fun refreshReadiness() {
+        val touchBridgeOk = isTouchBridgeReady()
+        val notificationOk = isNotificationReady()
+        val ready = touchBridgeOk && notificationOk && captureReady && selectedGame != null
+
+        touchBridgeStatus?.let {
+            it.text = if (touchBridgeOk) {
+                "● Touch Bridge: READY"
+            } else {
+                "○ Touch Bridge: REQUIRED"
+            }
+            it.setTextColor(if (touchBridgeOk) green else red)
         }
 
         notificationStatus?.let {
@@ -476,7 +487,10 @@ class MainActivity : Activity() {
         }
 
         prepareCaptureButton?.isEnabled =
-            selectedGame != null && overlayOk && notificationOk
+            selectedGame != null && touchBridgeOk && notificationOk && !captureReady
+        prepareCaptureButton?.alpha =
+            if (prepareCaptureButton?.isEnabled == true) 1f else 0.45f
+
         startButton?.isEnabled = ready
         startButton?.alpha = if (ready) 1f else 0.45f
     }
@@ -571,10 +585,10 @@ class MainActivity : Activity() {
             return
         }
 
-        if (!Settings.canDrawOverlays(this) || !isNotificationReady()) {
+        if (!isTouchBridgeReady() || !isNotificationReady()) {
             Toast.makeText(
                 this,
-                "Enable overlay and notification permissions first.",
+                "Enable the Touch Bridge and notification permissions first.",
                 Toast.LENGTH_LONG
             ).show()
             refreshReadiness()
@@ -595,9 +609,9 @@ class MainActivity : Activity() {
 
     private fun requestGameCapture() {
         val mpm = getSystemService(MediaProjectionManager::class.java)
-        val config = MediaProjectionConfig.createConfigForUserChoice()
+        @Suppress("DEPRECATION")
         startActivityForResult(
-            mpm.createScreenCaptureIntent(config),
+            mpm.createScreenCaptureIntent(),
             reqCapture
         )
     }
