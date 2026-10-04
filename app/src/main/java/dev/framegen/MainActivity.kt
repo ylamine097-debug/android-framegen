@@ -198,14 +198,14 @@ class MainActivity : Activity() {
         }
         gameCard.addView(label("1  •  CHOOSE GAME", 13f, uiText, true))
         gameCard.addView(label(
-            "Only games are listed here. WhatsApp and ordinary apps are filtered out.",
+            "Games are listed first; Android game flags and additional game candidates are detected automatically.",
             11f, muted
         ).also { addMargin(it, top = 3, bottom = 10) })
 
         val games = findLaunchableGames()
         if (games.isEmpty()) {
             gameCard.addView(label(
-                "No games detected. Some games do not advertise themselves to Android as CATEGORY_GAME.",
+                "No game candidates detected on this device. Some games may not expose any game metadata to Android.",
                 12f, red
             ))
         } else {
@@ -506,12 +506,7 @@ class MainActivity : Activity() {
         })
 
         return packages.values
-            .filter { app ->
-                app.category == ApplicationInfo.CATEGORY_GAME ||
-                    hasGameCategory(app.packageName) ||
-                    // Some older/ported games still expose the legacy game flag.
-                    (app.flags and ApplicationInfo.FLAG_IS_GAME) != 0
-            }
+            .filter { app -> isGameCandidate(app) }
             .map {
                 GameEntry(
                     label = pm.getApplicationLabel(it).toString(),
@@ -520,6 +515,42 @@ class MainActivity : Activity() {
             }
             .distinctBy { it.packageName }
             .sortedBy { it.label.lowercase() }
+    }
+
+    private fun isGameCandidate(app: ApplicationInfo): Boolean {
+        if (app.packageName == packageName) return false
+
+        val pm = packageManager
+        val label = pm.getApplicationLabel(app).toString()
+        val haystack = (label + " " + app.packageName).lowercase()
+
+        if (app.category == ApplicationInfo.CATEGORY_GAME) return true
+        if (hasGameCategory(app.packageName)) return true
+        if ((app.flags and ApplicationInfo.FLAG_IS_GAME) != 0) return true
+
+        // Android doesn't expose a universal "installed games" API on every
+        // device. These filters recover many games that forget CATEGORY_GAME
+        // while excluding common communication/media/productivity apps.
+        val blocked = listOf(
+            "whatsapp", "instagram", "facebook", "messenger", "telegram",
+            "discord", "snapchat", "tiktok", "youtube", "spotify",
+            "chrome", "browser", "gmail", "outlook", "mail", "settings",
+            "calculator", "calendar", "clock", "camera", "gallery",
+            "photos", "maps", "drive", "files", "launcher", "play store",
+            "google play", "weather", "notes", "contacts", "phone"
+        )
+
+        if (blocked.any { haystack.contains(it) }) return false
+
+        val hints = listOf(
+            "game", "racing", "race", "battle", "arena", "quest", "craft",
+            "war", "legend", "heroes", "hero", "survival", "shooter",
+            "fps", "rpg", "moba", "puzzle", "zombie", "fighter", "football",
+            "soccer", "basket", "golf", "chess", "kart", "simulator",
+            "tycoon", "idle", "adventure", "strategy", "tactics", "dungeon"
+        )
+
+        return hints.any { haystack.contains(it) }
     }
 
     private fun hasGameCategory(packageName: String): Boolean {
@@ -550,25 +581,18 @@ class MainActivity : Activity() {
             return
         }
 
-        val launchIntent = packageManager.getLaunchIntentForPackage(game.packageName)
-        if (launchIntent == null) {
-            Toast.makeText(this, "Could not launch " + game.label, Toast.LENGTH_LONG).show()
-            return
-        }
-
+        // IMPORTANT: ask Android for MediaProjection while FrameGen is still
+        // the foreground activity. Do not launch the game before this dialog;
+        // otherwise Android can place the permission UI behind the game and
+        // immediately return to the launcher/game.
         Toast.makeText(
             this,
-            "Open " + game.label + " and choose its window for capture.",
+            "Android will now ask what game window to capture. Select " +
+                game.label + " in the system capture dialog.",
             Toast.LENGTH_LONG
         ).show()
 
-        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        startActivity(launchIntent)
-
-        Handler(Looper.getMainLooper()).postDelayed(
-            { requestGameCapture() },
-            1800L
-        )
+        requestGameCapture()
     }
 
     private fun requestGameCapture() {
@@ -588,17 +612,21 @@ class MainActivity : Activity() {
         if (game == null || data == null || code == null || !captureReady) {
             Toast.makeText(
                 this,
-                "Complete the permission and capture setup first.",
+                "Complete all permissions and prepare game capture first.",
                 Toast.LENGTH_LONG
             ).show()
             refreshReadiness()
             return
         }
 
-        // The game was already launched during PREPARE GAME CAPTURE and is the
-        // exact window selected by Android's MediaProjection dialog. Do not
-        // relaunch it here; doing so can kick the user to the game's main menu
-        // and invalidate the selected capture window.
+        val launchIntent = packageManager.getLaunchIntentForPackage(game.packageName)
+        if (launchIntent == null) {
+            Toast.makeText(this, "Could not launch " + game.label, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(launchIntent)
 
         val serviceIntent = Intent(this, FrameGenService::class.java)
             .putExtra("code", code)
