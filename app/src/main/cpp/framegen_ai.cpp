@@ -259,26 +259,30 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
         static_cast<int>(pixels)
     );
 
-    ncnn::Mat in0 = ncnn::Mat::from_pixels(
-        engine->rgb0.data(),
-        ncnn::Mat::PIXEL_RGB,
+    // Match upstream RIFE's fp16-storage + int8-storage path: wrap the
+    // caller-owned tightly packed RGB buffers directly. This avoids extra
+    // full-frame allocations on the CPU before the Vulkan upload.
+    ncnn::Mat in0(
         width,
-        height
+        height,
+        3,
+        static_cast<void*>(engine->rgb0.data()),
+        static_cast<size_t>(1),
+        1
     );
-    ncnn::Mat in1 = ncnn::Mat::from_pixels(
-        engine->rgb1.data(),
-        ncnn::Mat::PIXEL_RGB,
+    ncnn::Mat in1(
         width,
-        height
+        height,
+        3,
+        static_cast<void*>(engine->rgb1.data()),
+        static_cast<size_t>(1),
+        1
     );
-
-    // RIFE v4.6 on the Vulkan path expects a tightly packed 8-bit RGB
-    // destination when fp16 storage + int8 storage are enabled. This mirrors
-    // upstream RIFE's download path and avoids an invalid stride/allocation.
     ncnn::Mat outimage(
         width,
         height,
         3,
+        static_cast<void*>(engine->rgbOut.data()),
         static_cast<size_t>(1),
         1
     );
@@ -321,13 +325,8 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
         return ret;
     }
 
-    outimage.to_pixels(
-        engine->rgbOut.data(),
-        ncnn::Mat::PIXEL_RGB
-    );
-
-    // Prevent the AI intermediate frame from causing a visible global
-    // brightness jump/dip relative to the real game frames.
+    // RIFE writes directly into engine->rgbOut for the current ncnn
+    // storage configuration. Do not perform another full-frame conversion.
     match_luminance(
         engine->rgbOut.data(),
         static_cast<int>(pixels),
