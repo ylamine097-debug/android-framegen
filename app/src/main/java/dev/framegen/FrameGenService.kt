@@ -96,16 +96,9 @@ class FrameGenService : Service() {
         }
 
         override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
-            // Do NOT hide the overlay here. The overlay intentionally covers
-            // the captured game, which Android can report as "occluded".
-            // Hiding it causes the visible dark/flicker loop.
-            updateNotification(
-                if (isVisible) {
-                    "RIFE AI FrameGen active • " + gameName
-                } else {
-                    "RIFE AI FrameGen active • capture continues"
-                }
-            )
+            // Intentionally ignored. Our overlay covers the selected game window,
+            // so Android can report the source as occluded even while capture is
+            // healthy. Toggling or hiding the overlay here causes flicker.
         }
     }
 
