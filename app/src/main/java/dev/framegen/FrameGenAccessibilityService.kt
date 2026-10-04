@@ -50,6 +50,10 @@ class FrameGenAccessibilityService : AccessibilityService() {
         fun hideFrameGenOverlay() {
             current?.hideOverlayInternal()
         }
+
+        fun setFrameGenOverlayVisible(visible: Boolean) {
+            current?.setOverlayVisibleInternal(visible)
+        }
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -197,6 +201,13 @@ class FrameGenAccessibilityService : AccessibilityService() {
                 overlaySurface = null
                 fpsText = null
             }
+        }
+    }
+
+    private fun setOverlayVisibleInternal(visible: Boolean) {
+        main.post {
+            overlay?.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+            renderer?.setPaused(!visible)
         }
     }
 
