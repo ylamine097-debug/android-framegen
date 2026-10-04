@@ -3,18 +3,43 @@ on:
   push:
     branches: [main, master]
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
-      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        run: |
+          sdkmanager --install             "platforms;android-34"             "build-tools;34.0.0"             "cmake;3.22.1"             "ndk;27.2.12479018"
+
+      - name: Fetch RIFE ncnn Vulkan sources
+        run: |
+          rm -rf app/src/main/cpp/third_party/rife-ncnn-vulkan
+          git clone --depth 1 --recurse-submodules             https://github.com/nihui/rife-ncnn-vulkan.git             app/src/main/cpp/third_party/rife-ncnn-vulkan
+
+      - name: Fetch RIFE v4.6 neural model
+        run: |
+          set -e
+          mkdir -p app/src/main/assets/models/rife-v4.6
+          curl -L --fail --retry 4             "https://raw.githubusercontent.com/nihui/rife-ncnn-vulkan/master/models/rife-v4.6/flownet.param"             -o app/src/main/assets/models/rife-v4.6/flownet.param
+          curl -L --fail --retry 4             "https://raw.githubusercontent.com/nihui/rife-ncnn-vulkan/master/models/rife-v4.6/flownet.bin"             -o app/src/main/assets/models/rife-v4.6/flownet.bin
+          ls -lh app/src/main/assets/models/rife-v4.6
+
+      - name: Configure Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.7"
+
       - name: Build debug APK
         run: |
           set +e
@@ -22,6 +47,7 @@ jobs:
           code=$?
           cat build.log
           exit $code
+
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
@@ -29,6 +55,7 @@ jobs:
           name: FrameGen-build-log
           path: build.log
           if-no-files-found: warn
+
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
