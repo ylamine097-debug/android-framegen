@@ -338,6 +338,7 @@ void main() {
         w = p[0]; h = p[1]
         destroyTargets()
         createTargets()
+        ensureAiBuffers()
         st?.setDefaultBufferSize(w, h)
         vd?.resize(w, h, dpi)
         onBufferSize(w, h)
@@ -514,13 +515,16 @@ void main() {
     private fun captureCurrentFrame() {
         val dst = currentPixels ?: return
         dst.position(0)
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo[if (pending == null) 0 else 0])
-        // drawOes() leaves the current frame target bound. Restore it using the
-        // currently rendered texture's FBO by looking at the pixel source is not
-        // possible after a swap, so use tex[0]/tex[1] explicitly in the loop.
-        //
-        // The loop calls drawOes(cur), so the active FBO is still that target.
-        GLES30.glReadPixels(0, 0, w, h, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, dst)
+        // drawOes(cur) leaves the current real frame framebuffer bound.
+        GLES30.glReadPixels(
+            0,
+            0,
+            w,
+            h,
+            GLES30.GL_RGBA,
+            GLES30.GL_UNSIGNED_BYTE,
+            dst
+        )
         dst.position(0)
     }
 
