@@ -21,10 +21,11 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.LockSupport
 
 /**
- * Pure-GPU (OpenGL ES 3.0) frame generation:
- *   screen capture -> GL texture -> block motion estimation (fragment shader)
- *   -> motion-compensated interpolation of N-1 in-between frames -> overlay surface.
- * Works on any GLES 3.0 GPU, including Mali.
+ * Game-window capture -> OpenGL texture -> frame readback ->
+ * RIFE v4.6 neural interpolation on Vulkan/NCNN -> generated overlay frame.
+ *
+ * The legacy shader interpolator remains only as an emergency fallback when
+ * the neural backend cannot initialize; normal operation uses real RIFE AI.
  */
 class FrameGenRenderer(
     private val outSurface: Surface,
@@ -282,8 +283,9 @@ void main() {
                                 drawBlit(aiTex)
                                 generatedAny = true
                             } else {
-                                // Emergency fallback only; this is not labeled as AI.
-                                drawInterp(1 - cur, cur, k.toFloat() / effectiveMultiplier)
+                                // Never present a shader-generated frame as AI.
+                                Log.e(TAG, "RIFE inference failed at t=" + (k.toFloat() / effectiveMultiplier))
+                                drawBlit(tex[1 - cur])
                             }
 
                             sleepUntil(base + k * step)
@@ -443,7 +445,7 @@ void main() {
             null
         }
         aiReady = ai?.isReady == true
-        Log.i(TAG, if (aiReady) "RIFE v4.6 neural frame generation READY" else "RIFE neural backend unavailable; using shader fallback")
+        Log.i(TAG, if (aiReady) "RIFE v4.6 neural frame generation READY" else "RIFE neural backend unavailable; real-frame passthrough only")
 
         val s = SurfaceTexture(oesTex)
         s.setDefaultBufferSize(w, h)
