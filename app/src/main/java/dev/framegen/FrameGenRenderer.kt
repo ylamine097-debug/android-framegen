@@ -358,6 +358,7 @@ void main() {
         statsAiFrames = 0
     }
 
+    private fun sleepUntil(t: Long) {
         while (true) {
             val d = t - System.nanoTime()
             if (d <= 0) return
