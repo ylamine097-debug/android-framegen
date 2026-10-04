@@ -33,17 +33,9 @@ jobs:
             https://github.com/nihui/rife-ncnn-vulkan.git \
             app/src/main/cpp/third_party/rife-ncnn-vulkan
 
-          # Prefer FP16 arithmetic on modern mobile Vulkan GPUs.
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("app/src/main/cpp/third_party/rife-ncnn-vulkan/src/rife.cpp")
-          s = p.read_text()
-          s = s.replace(
-              "opt.use_fp16_arithmetic = false;",
-              "opt.use_fp16_arithmetic = true;"
-          )
-          p.write_text(s)
-          PY
+          # Keep upstream RIFE's conservative Vulkan arithmetic settings.
+          # FP16 packed/storage are already enabled by RIFE; forcing FP16 arithmetic
+          # can be less stable across different mobile GPU drivers.
 
       - name: Fetch RIFE v4.6 neural model
         run: |
