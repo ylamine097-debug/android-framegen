@@ -5,9 +5,12 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.widget.ArrayAdapter
@@ -25,7 +28,7 @@ data class GameEntry(
 class MainActivity : Activity() {
     private val reqCapture = 42
     private var mult = 2
-    private var quality = 0.5f
+    private var quality = 0.67f
     private var selectedGame: GameEntry? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,7 +48,7 @@ class MainActivity : Activity() {
         root.addView(label("FrameGen — Neural AI", 28f))
         root.addView(label(
             "Select the game first. FrameGen uses a real neural frame-interpolation model (RIFE v4.6) running locally through Vulkan/NCNN. " +
-            "After Android capture permission is approved, the selected game opens and FrameGen waits 10 seconds before processing."
+            "After the game opens, Android asks you to choose that game window for capture. FrameGen then waits 10 seconds before processing."
         ))
 
         root.addView(label("1. Choose your game"))
@@ -142,7 +145,7 @@ class MainActivity : Activity() {
         })
 
         root.addView(label(
-            "Flow: select game → Apply Settings → Start FrameGen → permissions → game opens → 10-second warm-up → FrameGen starts."
+            "Flow: select game → Apply Settings → Start FrameGen → game opens → choose the game window → 10-second AI warm-up → FrameGen starts."
         , 12f))
 
         root.gravity = Gravity.TOP
@@ -189,7 +192,7 @@ class MainActivity : Activity() {
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(
                 this,
-                "Allow Display over other apps for FrameGen, then press APPLY & START again.",
+                "Allow Display over other apps for FrameGen, then press START FRAMEGEN again.",
                 Toast.LENGTH_LONG
             ).show()
             startActivity(
@@ -201,17 +204,8 @@ class MainActivity : Activity() {
             return
         }
 
-        // Android requires user consent for every MediaProjection capture session.
-        val mpm = getSystemService(MediaProjectionManager::class.java)
-        @Suppress("DEPRECATION")
-        startActivityForResult(mpm.createScreenCaptureIntent(), reqCapture)
-    }
-
-    private fun launchGameThenStartCaptureService(
-        resultCode: Int,
-        data: Intent,
-        game: GameEntry
-    ) {
+        // Android 14+ supports a user-selected app window. Launch the game
+        // first, then let the system capture picker target that game window.
         val launchIntent = packageManager.getLaunchIntentForPackage(game.packageName)
         if (launchIntent == null) {
             Toast.makeText(this, "Could not launch " + game.label, Toast.LENGTH_LONG).show()
@@ -220,16 +214,33 @@ class MainActivity : Activity() {
 
         Toast.makeText(
             this,
-            game.label + " starting — FrameGen will begin after 10 seconds.",
+            game.label + " starting — choose its window in the capture dialog.",
             Toast.LENGTH_LONG
         ).show()
 
-        // Open the game immediately after capture permission.
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         startActivity(launchIntent)
 
-        // Start the foreground service immediately, but keep the actual capture/
-        // interpolation pipeline stopped for the requested 10-second warm-up.
+        Handler(Looper.getMainLooper()).postDelayed(
+            { requestGameCapture() },
+            2000L
+        )
+    }
+
+    private fun requestGameCapture() {
+        val mpm = getSystemService(MediaProjectionManager::class.java)
+        val config = MediaProjectionConfig.createConfigForUserChoice()
+        startActivityForResult(
+            mpm.createScreenCaptureIntent(config),
+            reqCapture
+        )
+    }
+
+    private fun startCaptureService(
+        resultCode: Int,
+        data: Intent,
+        game: GameEntry
+    ) {
         val serviceIntent = Intent(this, FrameGenService::class.java)
             .putExtra("code", resultCode)
             .putExtra("data", data)
@@ -239,6 +250,11 @@ class MainActivity : Activity() {
             .putExtra("gameName", game.label)
 
         startForegroundService(serviceIntent)
+        Toast.makeText(
+            this,
+            "Capture connected. FrameGen will warm up for 10 seconds, then generate AI frames.",
+            Toast.LENGTH_LONG
+        ).show()
         moveTaskToBack(true)
     }
 
@@ -246,9 +262,13 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
 
-        if (requestCode == reqCapture && resultCode == RESULT_OK && data != null) {
-            val game = selectedGame ?: return
-            launchGameThenStartCaptureService(resultCode, data, game)
+        if (requestCode == reqCapture) {
+            if (resultCode == RESULT_OK && data != null) {
+                val game = selectedGame ?: return
+                startCaptureService(resultCode, data, game)
+            } else {
+                Toast.makeText(this, "Screen capture was cancelled. FrameGen did not start.", Toast.LENGTH_LONG).show()
+            }
         }
     }
 }
