@@ -524,7 +524,7 @@ class MainActivity : Activity() {
 
     private fun hasGameCategory(packageName: String): Boolean {
         val intent = Intent(Intent.ACTION_MAIN).apply {
-            addCategory(Intent.CATEGORY_GAME)
+            addCategory("android.intent.category.GAME")
             setPackage(packageName)
         }
         return packageManager.queryIntentActivities(
