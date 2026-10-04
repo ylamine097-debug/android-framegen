@@ -66,102 +66,6 @@ static void rgb_to_rgba(const unsigned char* rgb, unsigned char* rgba, int pixel
     }
 }
 
-static float sample_luma_rgb(
-    const unsigned char* rgb,
-    int pixelCount,
-    int sampleIndex,
-    int sampleStride
-) {
-    if (pixelCount <= 0) return 0.0f;
-    const int i = std::clamp(sampleIndex * sampleStride, 0, pixelCount - 1);
-    const float r = rgb[i * 3 + 0] / 255.0f;
-    const float g = rgb[i * 3 + 1] / 255.0f;
-    const float b = rgb[i * 3 + 2] / 255.0f;
-    return 0.2126f * r + 0.7152f * g + 0.0722f * b;
-}
-
-static void compute_luma_stats(
-    const unsigned char* rgb,
-    int pixelCount,
-    float& mean,
-    float& rms,
-    float& darkFloor
-) {
-    mean = 0.0f;
-    rms = 0.0f;
-    darkFloor = 0.0f;
-
-    if (pixelCount <= 0) return;
-
-    constexpr int stride = 32;
-    constexpr int maxSamples = 4096;
-
-    double sum = 0.0;
-    double sumSq = 0.0;
-    float minPositive = 1.0f;
-    int count = 0;
-
-    const int samples = std::min(maxSamples, (pixelCount + stride - 1) / stride);
-    for (int s = 0; s < samples; ++s) {
-        const float l = sample_luma_rgb(rgb, pixelCount, s, stride);
-        sum += l;
-        sumSq += static_cast<double>(l) * l;
-        if (l > 0.015f) minPositive = std::min(minPositive, l);
-        ++count;
-    }
-
-    if (count == 0) return;
-
-    mean = static_cast<float>(sum / count);
-    rms = static_cast<float>(std::sqrt(sumSq / count));
-    darkFloor = minPositive;
-}
-
-static void match_luminance(
-    unsigned char* rgb,
-    int pixelCount,
-    float targetMean,
-    float targetRms,
-    float sourceMean
-) {
-    if (pixelCount <= 0) return;
-
-    float outputMean = 0.0f;
-    float outputRms = 0.0f;
-    float outputDarkFloor = 0.0f;
-    compute_luma_stats(rgb, pixelCount, outputMean, outputRms, outputDarkFloor);
-
-    if (outputMean < 0.008f || targetMean < 0.008f) {
-        return;
-    }
-
-    // Use both mean and RMS so a darker-than-source neural result is lifted
-    // even when the scene contains large black areas.
-    const float meanGain = targetMean / outputMean;
-    const float rmsGain = targetRms / std::max(outputRms, 0.008f);
-    float gain = 0.60f * meanGain + 0.40f * rmsGain;
-
-    // Do not clamp so tightly that genuinely dark neural frames remain dark.
-    // Keep the bounds finite to avoid pathological amplification.
-    gain = std::clamp(gain, 0.55f, 2.20f);
-
-    // Small bias correction for crushed blacks. This is intentionally tiny so
-    // it does not turn a genuinely black game scene gray.
-    const float targetBlack = std::clamp(sourceMean * 0.015f, 0.0f, 0.012f);
-    const float outputBlack = std::clamp(outputDarkFloor, 0.0f, 0.02f);
-    const float bias = targetBlack - outputBlack * gain;
-
-    for (int i = 0; i < pixelCount; ++i) {
-        for (int c = 0; c < 3; ++c) {
-            const float v = rgb[i * 3 + c] / 255.0f;
-            const float corrected = std::clamp(v * gain + bias, 0.0f, 1.0f);
-            rgb[i * 3 + c] = static_cast<unsigned char>(
-                std::lround(corrected * 255.0f)
-            );
-        }
-    }
-}
-
 } // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -272,60 +176,23 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
         static_cast<int>(pixels)
     );
 
-    // The active NCNN configuration uses FP16 storage + INT8 storage.
-    // In that mode upstream RIFE directly wraps tightly packed RGB8 memory.
-    // This avoids extra full-frame allocations and matches process_v4's
-    // expected pixel layout on Vulkan.
-    ncnn::Mat in0(
-        width,
-        height,
-        static_cast<void*>(engine->rgb0.data()),
-        static_cast<size_t>(3),
-        1,
-        nullptr
-    );
-    ncnn::Mat in1(
-        width,
-        height,
-        static_cast<void*>(engine->rgb1.data()),
-        static_cast<size_t>(3),
-        1,
-        nullptr
-    );
-    ncnn::Mat outimage(
-        width,
-        height,
-        static_cast<void*>(engine->rgbOut.data()),
-        static_cast<size_t>(3),
-        1,
-        nullptr
-    );
-
-    float mean0 = 0.0f;
-    float rms0 = 0.0f;
-    float black0 = 0.0f;
-    float mean1 = 0.0f;
-    float rms1 = 0.0f;
-    float black1 = 0.0f;
-
-    compute_luma_stats(
+    // Convert the interleaved RGB8 capture buffers into proper NCNN image
+    // tensors. Directly wrapping RGB bytes as a 3-channel planar Mat was the
+    // source of corrupted AI frames and device-specific native crashes.
+    ncnn::Mat in0 = ncnn::Mat::from_pixels(
         engine->rgb0.data(),
-        static_cast<int>(pixels),
-        mean0,
-        rms0,
-        black0
+        ncnn::Mat::PIXEL_RGB,
+        width,
+        height
     );
-    compute_luma_stats(
+    ncnn::Mat in1 = ncnn::Mat::from_pixels(
         engine->rgb1.data(),
-        static_cast<int>(pixels),
-        mean1,
-        rms1,
-        black1
+        ncnn::Mat::PIXEL_RGB,
+        width,
+        height
     );
 
-    const float targetMean = 0.5f * (mean0 + mean1);
-    const float targetRms = 0.5f * (rms0 + rms1);
-    const float sourceMean = targetMean;
+    ncnn::Mat outimage(width, height, 3);
 
     const int ret = engine->rife->process_v4(
         in0,
@@ -339,13 +206,9 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
         return ret;
     }
 
-    // RIFE wrote its interleaved RGB8 result directly into rgbOut.
-    match_luminance(
+    outimage.to_pixels(
         engine->rgbOut.data(),
-        static_cast<int>(pixels),
-        targetMean,
-        targetRms,
-        sourceMean
+        ncnn::Mat::PIXEL_RGB
     );
 
     rgb_to_rgba(
