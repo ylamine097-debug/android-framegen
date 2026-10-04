@@ -2,6 +2,7 @@
 #include <android/log.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cmath>
 #include <cstring>
@@ -184,7 +185,9 @@ Java_dev_framegen_AiFrameGenerator_nativeCreate(
     auto engine = std::make_unique<Engine>();
     int cpuThreads = static_cast<int>(std::thread::hardware_concurrency());
     if (cpuThreads <= 0) cpuThreads = 4;
-    cpuThreads = std::clamp(cpuThreads, 2, 6);
+    // RIFE's num_threads controls its CPU helper threads. Keep it modest so the
+    // render thread and Android system remain responsive on mobile.
+    cpuThreads = std::clamp(cpuThreads, 2, 4);
 
     engine->rife = std::make_unique<RIFE>(
         requestedGpu,
@@ -219,6 +222,8 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
 ) {
     auto* engine = reinterpret_cast<Engine*>(handle);
     if (!engine || width <= 0 || height <= 0) return -1;
+
+    static std::atomic<int> successCount{0};
 
     const size_t pixels = static_cast<size_t>(width) * static_cast<size_t>(height);
     const jlong rgbaBytes = static_cast<jlong>(pixels * 4u);
@@ -332,6 +337,11 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
         static_cast<unsigned char*>(outPtr),
         static_cast<int>(pixels)
     );
+
+    const int count = ++successCount;
+    if ((count % 30) == 0) {
+        LOGI("RIFE AI generated %d intermediate frames", count);
+    }
 
     return 0;
 }
