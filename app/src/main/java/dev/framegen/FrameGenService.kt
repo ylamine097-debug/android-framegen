@@ -51,6 +51,22 @@ class FrameGenService : Service() {
     private var gameName = "selected game"
     private var aiWarmupMs = DEFAULT_DELAY_MS
 
+    private val projectionCallback = object : MediaProjection.Callback() {
+        override fun onStop() {
+            FrameGenAccessibilityService.hideFrameGenOverlay()
+            stopSelf()
+        }
+
+        override fun onCapturedContentResize(width: Int, height: Int) {
+            // The renderer handles the VirtualDisplay resize.
+        }
+
+        override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
+            // Intentionally ignored; the generated overlay is expected to
+            // occlude the captured game window.
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
     }
@@ -129,6 +145,10 @@ class FrameGenService : Service() {
 
             modelDirectory = modelDir
 
+            // Android 14 requires a callback on the MediaProjection before
+            // the VirtualDisplay is created.
+            mp.registerCallback(projectionCallback, main)
+
             val bounds = getSystemService(android.view.WindowManager::class.java)
                 .maximumWindowMetrics.bounds
 
@@ -160,31 +180,10 @@ class FrameGenService : Service() {
                     "FrameGen Touch Bridge is not enabled. Enable it in Accessibility settings first.",
                     Toast.LENGTH_LONG
                 ).show()
+                try { mp.unregisterCallback(projectionCallback) } catch (_: Throwable) {}
                 stopSelf()
                 return
             }
-
-            mp.registerCallback(
-                object : MediaProjection.Callback() {
-                    override fun onStop() {
-                        FrameGenAccessibilityService.hideFrameGenOverlay()
-                        stopSelf()
-                    }
-
-                    override fun onCapturedContentResize(width: Int, height: Int) {
-                        // The renderer owns its VirtualDisplay resize path.
-                    }
-
-                    override fun onCapturedContentVisibilityChanged(
-                        isVisible: Boolean
-                    ) {
-                        // Never toggle the overlay from this callback.
-                        // Occlusion is expected because the generated image is
-                        // intentionally shown above the captured game window.
-                    }
-                },
-                main
-            )
 
             updateNotification("RIFE AI FrameGen active • " + gameName)
         } catch (e: SecurityException) {
