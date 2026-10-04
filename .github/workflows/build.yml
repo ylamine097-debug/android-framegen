@@ -27,8 +27,23 @@ jobs:
 
       - name: Fetch RIFE ncnn Vulkan sources
         run: |
+          set -e
           rm -rf app/src/main/cpp/third_party/rife-ncnn-vulkan
-          git clone --depth 1 --recurse-submodules             https://github.com/nihui/rife-ncnn-vulkan.git             app/src/main/cpp/third_party/rife-ncnn-vulkan
+          git clone --depth 1 --recurse-submodules \
+            https://github.com/nihui/rife-ncnn-vulkan.git \
+            app/src/main/cpp/third_party/rife-ncnn-vulkan
+
+          # Prefer FP16 arithmetic on modern mobile Vulkan GPUs.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("app/src/main/cpp/third_party/rife-ncnn-vulkan/src/rife.cpp")
+          s = p.read_text()
+          s = s.replace(
+              "opt.use_fp16_arithmetic = false;",
+              "opt.use_fp16_arithmetic = true;"
+          )
+          p.write_text(s)
+          PY
 
       - name: Fetch RIFE v4.6 neural model
         run: |
