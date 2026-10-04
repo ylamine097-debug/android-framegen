@@ -259,32 +259,27 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
         static_cast<int>(pixels)
     );
 
-    // Match upstream RIFE's fp16-storage + int8-storage path: wrap the
-    // caller-owned tightly packed RGB buffers directly. This avoids extra
-    // full-frame allocations on the CPU before the Vulkan upload.
-    ncnn::Mat in0(
+    // Use NCNN's pixel adapters here. The model tensors are planar and
+    // require NCNN-managed channel strides; wrapping interleaved RGB memory
+    // directly can overrun the caller buffer and crash on real devices.
+    ncnn::Mat in0 = ncnn::Mat::from_pixels(
+        engine->rgb0.data(),
+        ncnn::Mat::PIXEL_RGB,
         width,
-        height,
-        3,
-        static_cast<void*>(engine->rgb0.data()),
-        static_cast<size_t>(1),
-        1
+        height
     );
-    ncnn::Mat in1(
+    ncnn::Mat in1 = ncnn::Mat::from_pixels(
+        engine->rgb1.data(),
+        ncnn::Mat::PIXEL_RGB,
         width,
-        height,
-        3,
-        static_cast<void*>(engine->rgb1.data()),
-        static_cast<size_t>(1),
-        1
+        height
     );
+
     ncnn::Mat outimage(
         width,
         height,
-        3,
-        static_cast<void*>(engine->rgbOut.data()),
-        static_cast<size_t>(1),
-        1
+        static_cast<size_t>(3),
+        3
     );
 
     float mean0 = 0.0f;
@@ -325,8 +320,16 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
         return ret;
     }
 
-    // RIFE writes directly into engine->rgbOut for the current ncnn
-    // storage configuration. Do not perform another full-frame conversion.
+    // Convert RIFE's planar output back to tightly packed RGB before
+    // applying luminance correction and returning RGBA to Kotlin.
+    if (outimage.to_pixels(
+            engine->rgbOut.data(),
+            ncnn::Mat::PIXEL_RGB
+        ) != 0) {
+        LOGE("RIFE output conversion failed");
+        return -3;
+    }
+
     match_luminance(
         engine->rgbOut.data(),
         static_cast<int>(pixels),
