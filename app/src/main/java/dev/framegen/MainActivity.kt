@@ -258,7 +258,7 @@ class MainActivity : Activity() {
         }
         permissionCard.addView(label("2  •  PERMISSIONS & CAPTURE", 13f, uiText, true))
         permissionCard.addView(label(
-            "Everything below must be READY before START FRAMEGEN unlocks.",
+            "Enable overlay + notifications, then authorize the game-window capture before START FRAMEGEN unlocks.",
             11f, muted
         ).also { addMargin(it, top = 3, bottom = 8) })
 
@@ -307,7 +307,7 @@ class MainActivity : Activity() {
         addMargin(enableNotifications, top = 7)
 
         prepareCaptureButton = Button(this).apply {
-            text = "PREPARE GAME CAPTURE"
+            text = "AUTHORIZE GAME CAPTURE"
             textSize = 12f
             minHeight = dp(54)
             setTextColor(uiText)
@@ -433,7 +433,7 @@ class MainActivity : Activity() {
         }
         info.addView(label("STARTUP FLOW", 10f, cyan, true))
         info.addView(label(
-            "Choose game → enable permissions → prepare game capture → START FRAMEGEN → " +
+            "Choose game → enable permissions → authorize capture → START FRAMEGEN → " +
             "game opens → 10-second AI warm-up → RIFE neural frame generation.",
             11f, muted
         ).also { addMargin(it, top = 6) })
@@ -574,24 +574,22 @@ class MainActivity : Activity() {
         if (!Settings.canDrawOverlays(this) || !isNotificationReady()) {
             Toast.makeText(
                 this,
-                "Enable the required permissions first.",
+                "Enable overlay and notification permissions first.",
                 Toast.LENGTH_LONG
             ).show()
             refreshReadiness()
             return
         }
 
-        // IMPORTANT: ask Android for MediaProjection while FrameGen is still
-        // the foreground activity. Do not launch the game before this dialog;
-        // otherwise Android can place the permission UI behind the game and
-        // immediately return to the launcher/game.
         Toast.makeText(
             this,
-            "Android will now ask what game window to capture. Select " +
-                game.label + " in the system capture dialog.",
+            "Screen capture permission is next. Select " +
+                game.label + " in the Android capture dialog.",
             Toast.LENGTH_LONG
         ).show()
 
+        // IMPORTANT: do not launch the game here. This activity must remain
+        // foreground so Android can display its MediaProjection consent UI.
         requestGameCapture()
     }
 
