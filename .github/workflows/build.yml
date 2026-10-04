@@ -16,11 +16,14 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
-
-      - name: Install Android build tools
+      - name: Check preinstalled Android toolchain
         run: |
-          sdkmanager --install             "platforms;android-34"             "build-tools;34.0.0"             "cmake;3.22.1"             "ndk;27.2.12479018"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          command -v sdkmanager || true
+          command -v cmake || true
+          ls -1 "$ANDROID_HOME/ndk" 2>/dev/null || true
+          ls -1 "$ANDROID_HOME/cmake" 2>/dev/null || true
 
       - name: Fetch RIFE ncnn Vulkan sources
         run: |
