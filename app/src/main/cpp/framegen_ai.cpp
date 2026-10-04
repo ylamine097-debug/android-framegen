@@ -76,39 +76,31 @@ Java_dev_framegen_AiFrameGenerator_nativeCreate(
     std::string modelDir(modelChars);
     env->ReleaseStringUTFChars(jModelDirectory, modelChars);
 
-    try {
-        int requestedGpu = static_cast<int>(gpuIndex);
-        if (requestedGpu == -2) {
-            requestedGpu = ncnn::get_gpu_count() > 0
-                ? ncnn::get_default_gpu_index()
-                : -1;
-        }
+    int requestedGpu = static_cast<int>(gpuIndex);
+    if (requestedGpu == -2) {
+        requestedGpu = ncnn::get_gpu_count() > 0
+            ? ncnn::get_default_gpu_index()
+            : -1;
+    }
 
-        auto engine = std::make_unique<Engine>();
-        engine->rife = std::make_unique<RIFE>(
-            requestedGpu,
-            false, // TTA off for latency
-            false, // temporal TTA off for latency
-            false, // UHD tile mode off; caller controls resolution
-            1,
-            false, // RIFE v2
-            true   // RIFE v4
-        );
+    auto engine = std::make_unique<Engine>();
+    engine->rife = std::make_unique<RIFE>(
+        requestedGpu,
+        false,
+        false,
+        false,
+        1,
+        false,
+        true
+    );
 
-        if (engine->rife->load(modelDir) != 0) {
-            LOGE("RIFE model load failed: %s", modelDir.c_str());
-            return 0;
-        }
-
-        LOGI("RIFE v4.6 neural backend initialized on GPU %d", requestedGpu);
-        return reinterpret_cast<jlong>(engine.release());
-    } catch (const std::exception& e) {
-        LOGE("Native RIFE create exception: %s", e.what());
-        return 0;
-    } catch (...) {
-        LOGE("Native RIFE create unknown exception");
+    if (engine->rife->load(modelDir) != 0) {
+        LOGE("RIFE model load failed: %s", modelDir.c_str());
         return 0;
     }
+
+    LOGI("RIFE v4.6 neural backend initialized on GPU %d", requestedGpu);
+    return reinterpret_cast<jlong>(engine.release());
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -158,62 +150,52 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
         static_cast<int>(pixels)
     );
 
-    try {
-        ncnn::Mat in0 = ncnn::Mat::from_pixels(
-            engine->rgb0.data(),
-            ncnn::Mat::PIXEL_RGB,
-            width,
-            height
-        );
-        ncnn::Mat in1 = ncnn::Mat::from_pixels(
-            engine->rgb1.data(),
-            ncnn::Mat::PIXEL_RGB,
-            width,
-            height
-        );
+    ncnn::Mat in0 = ncnn::Mat::from_pixels(
+        engine->rgb0.data(),
+        ncnn::Mat::PIXEL_RGB,
+        width,
+        height
+    );
+    ncnn::Mat in1 = ncnn::Mat::from_pixels(
+        engine->rgb1.data(),
+        ncnn::Mat::PIXEL_RGB,
+        width,
+        height
+    );
 
-        // Match the public RIFE ncnn-vulkan sample's output allocation shape.
-        ncnn::Mat outimage(
-            width,
-            height,
-            static_cast<size_t>(3),
-            static_cast<size_t>(3)
-        );
+    // 3-channel RGB8 output buffer, matching RIFE's sample usage.
+    ncnn::Mat outimage(
+        width,
+        height,
+        3,
+        static_cast<size_t>(3),
+        nullptr
+    );
 
-        const int ret = engine->rife->process_v4(
-            in0,
-            in1,
-            std::clamp(static_cast<float>(timestep), 0.01f, 0.99f),
-            outimage
-        );
+    const int ret = engine->rife->process_v4(
+        in0,
+        in1,
+        std::clamp(static_cast<float>(timestep), 0.01f, 0.99f),
+        outimage
+    );
 
-        if (ret != 0) {
-            LOGE("RIFE process returned %d", ret);
-            return ret;
-        }
-
-        if (outimage.to_pixels(
-                engine->rgb0.data(),
-                ncnn::Mat::PIXEL_RGB
-            ) != 0) {
-            LOGE("RIFE output conversion failed");
-            return -3;
-        }
-
-        rgb_to_rgba(
-            engine->rgb0.data(),
-            static_cast<unsigned char*>(outPtr),
-            static_cast<int>(pixels)
-        );
-
-        return 0;
-    } catch (const std::exception& e) {
-        LOGE("RIFE interpolate exception: %s", e.what());
-        return -4;
-    } catch (...) {
-        LOGE("RIFE interpolate unknown exception");
-        return -5;
+    if (ret != 0) {
+        LOGE("RIFE process returned %d", ret);
+        return ret;
     }
+
+    outimage.to_pixels(
+        engine->rgb0.data(),
+        ncnn::Mat::PIXEL_RGB
+    );
+
+    rgb_to_rgba(
+        engine->rgb0.data(),
+        static_cast<unsigned char*>(outPtr),
+        static_cast<int>(pixels)
+    );
+
+    return 0;
 }
 
 extern "C" JNIEXPORT void JNICALL
