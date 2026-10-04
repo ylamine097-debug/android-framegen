@@ -28,6 +28,7 @@ struct Engine {
     std::vector<unsigned char> rgb0;
     std::vector<unsigned char> rgb1;
     std::vector<unsigned char> rgbaOut;
+    std::vector<unsigned char> rgbOut;
 };
 
 static bool get_direct(JNIEnv* env, jobject buffer, void** ptr, jlong requiredBytes) {
@@ -244,6 +245,7 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
         engine->rgb0.resize(pixels * 3u);
         engine->rgb1.resize(pixels * 3u);
         engine->rgbaOut.resize(pixels * 4u);
+        engine->rgbOut.resize(pixels * 3u);
     }
 
     rgba_to_rgb(
@@ -270,13 +272,15 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
         height
     );
 
-    // 3-channel RGB8 output buffer, matching RIFE's sample usage.
+    // RIFE v4.6 on the Vulkan path expects a tightly packed 8-bit RGB
+    // destination when fp16 storage + int8 storage are enabled. This mirrors
+    // upstream RIFE's download path and avoids an invalid stride/allocation.
     ncnn::Mat outimage(
         width,
         height,
         3,
-        static_cast<size_t>(3),
-        nullptr
+        static_cast<size_t>(1),
+        1
     );
 
     float mean0 = 0.0f;
@@ -318,14 +322,14 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
     }
 
     outimage.to_pixels(
-        engine->rgb0.data(),
+        engine->rgbOut.data(),
         ncnn::Mat::PIXEL_RGB
     );
 
     // Prevent the AI intermediate frame from causing a visible global
     // brightness jump/dip relative to the real game frames.
     match_luminance(
-        engine->rgb0.data(),
+        engine->rgbOut.data(),
         static_cast<int>(pixels),
         targetMean,
         targetRms,
@@ -333,7 +337,7 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
     );
 
     rgb_to_rgba(
-        engine->rgb0.data(),
+        engine->rgbOut.data(),
         static_cast<unsigned char*>(outPtr),
         static_cast<int>(pixels)
     );
