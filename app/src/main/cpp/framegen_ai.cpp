@@ -259,27 +259,33 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
         static_cast<int>(pixels)
     );
 
-    // Use NCNN's pixel adapters here. The model tensors are planar and
-    // require NCNN-managed channel strides; wrapping interleaved RGB memory
-    // directly can overrun the caller buffer and crash on real devices.
-    ncnn::Mat in0 = ncnn::Mat::from_pixels(
-        engine->rgb0.data(),
-        ncnn::Mat::PIXEL_RGB,
+    // The active NCNN configuration uses FP16 storage + INT8 storage.
+    // In that mode upstream RIFE directly wraps tightly packed RGB8 memory.
+    // This avoids extra full-frame allocations and matches process_v4's
+    // expected pixel layout on Vulkan.
+    ncnn::Mat in0(
         width,
-        height
+        height,
+        static_cast<void*>(engine->rgb0.data()),
+        static_cast<size_t>(3),
+        1,
+        nullptr
     );
-    ncnn::Mat in1 = ncnn::Mat::from_pixels(
-        engine->rgb1.data(),
-        ncnn::Mat::PIXEL_RGB,
+    ncnn::Mat in1(
         width,
-        height
+        height,
+        static_cast<void*>(engine->rgb1.data()),
+        static_cast<size_t>(3),
+        1,
+        nullptr
     );
-
     ncnn::Mat outimage(
         width,
         height,
+        static_cast<void*>(engine->rgbOut.data()),
         static_cast<size_t>(3),
-        3
+        1,
+        nullptr
     );
 
     float mean0 = 0.0f;
@@ -320,13 +326,7 @@ Java_dev_framegen_AiFrameGenerator_nativeInterpolate(
         return ret;
     }
 
-    // Convert RIFE's planar output back to tightly packed RGB before
-    // applying luminance correction and returning RGBA to Kotlin.
-    outimage.to_pixels(
-        engine->rgbOut.data(),
-        ncnn::Mat::PIXEL_RGB
-    );
-
+    // RIFE wrote its interleaved RGB8 result directly into rgbOut.
     match_luminance(
         engine->rgbOut.data(),
         static_cast<int>(pixels),
