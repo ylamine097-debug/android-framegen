@@ -203,6 +203,7 @@ void main() {
     private var statsInputFrames = 0
     private var statsOutputFrames = 0
     private var statsAiFrames = 0
+    private var statsAiAttempts = 0
     private var aiEnabledAtNs = Long.MAX_VALUE
 
     fun requestResize(nw: Int, nh: Int) { pending = intArrayOf(nw, nh) }
@@ -280,6 +281,7 @@ void main() {
                     val aiEnabled = System.nanoTime() >= aiEnabledAtNs
                     if (aiEnabled && aiReady && neural != null && prevPixels != null && currPixels != null && outPixels != null) {
                         for (k in 1 until effectiveMultiplier) {
+                            statsAiAttempts++
                             val ok = neural.interpolate(
                                 prevPixels,
                                 currPixels,
@@ -362,6 +364,7 @@ void main() {
         statsInputFrames = 0
         statsOutputFrames = 0
         statsAiFrames = 0
+        statsAiAttempts = 0
     }
 
     private fun sleepUntil(t: Long) {
@@ -484,7 +487,11 @@ void main() {
             null
         }
         aiReady = ai?.isReady == true
-        Log.i(TAG, if (aiReady) "RIFE v4.6 neural frame generation READY" else "RIFE neural backend unavailable; real-frame passthrough only")
+        Log.i(TAG, if (aiReady) {
+            "RIFE v4.6 neural frame generation READY"
+        } else {
+            "RIFE neural backend unavailable; real-frame passthrough only"
+        })
 
         val s = SurfaceTexture(oesTex)
         s.setDefaultBufferSize(w, h)
