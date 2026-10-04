@@ -104,7 +104,7 @@ class MainActivity : Activity() {
         qSpinner.adapter = ArrayAdapter(
             this,
             android.R.layout.simple_spinner_dropdown_item,
-            listOf("Fast — 50%", "Balanced — 67%", "Sharp — 100%")
+            listOf("Fast", "Balanced", "Sharp")
         )
         qSpinner.setSelection(0)
         qSpinner.setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
@@ -116,7 +116,18 @@ class MainActivity : Activity() {
         root.addView(qSpinner)
 
         root.addView(Button(this).apply {
-            text = "APPLY & START FRAMEGEN"
+            text = "APPLY SETTINGS"
+            setOnClickListener {
+                Toast.makeText(
+                    this@MainActivity,
+                    "Settings applied for " + (selectedGame?.label ?: "selected game"),
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        })
+
+        root.addView(Button(this).apply {
+            text = "START FRAMEGEN"
             setOnClickListener { applyAndStart() }
         })
 
@@ -131,8 +142,7 @@ class MainActivity : Activity() {
         })
 
         root.addView(label(
-            "Recommended flow: select the game → Apply & Start → allow overlay → allow Android screen capture → " +
-            "the selected game opens → 10-second warm-up → FrameGen starts."
+            "Flow: select game → Apply Settings → Start FrameGen → permissions → game opens → 10-second warm-up → FrameGen starts."
         , 12f))
 
         root.gravity = Gravity.TOP
