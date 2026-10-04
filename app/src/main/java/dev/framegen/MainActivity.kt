@@ -445,6 +445,15 @@ class MainActivity : Activity() {
         refreshReadiness()
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        refreshReadiness()
+    }
+
     private fun isNotificationReady(): Boolean =
         Build.VERSION.SDK_INT < 33 ||
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -597,22 +606,28 @@ class MainActivity : Activity() {
 
         Toast.makeText(
             this,
-            "Screen capture permission is next. Select " +
-                game.label + " in the Android capture dialog.",
+            "Next: Android will ask which app/window to capture.",
             Toast.LENGTH_LONG
         ).show()
 
-        // IMPORTANT: do not launch the game here. This activity must remain
-        // foreground so Android can display its MediaProjection consent UI.
-        requestGameCapture()
-    }
+        // Launch the game first so it is present in Android's single-app
+        // capture chooser, then put a transparent foreground Activity on top.
+        val launchIntent = packageManager.getLaunchIntentForPackage(game.packageName)
+        if (launchIntent == null) {
+            Toast.makeText(this, "Could not launch " + game.label, Toast.LENGTH_LONG).show()
+            return
+        }
 
-    private fun requestGameCapture() {
-        val mpm = getSystemService(MediaProjectionManager::class.java)
-        @Suppress("DEPRECATION")
-        startActivityForResult(
-            mpm.createScreenCaptureIntent(),
-            reqCapture
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(launchIntent)
+
+        Handler(Looper.getMainLooper()).postDelayed(
+            {
+                val intent = Intent(this, CaptureActivity::class.java)
+                    .putExtra(CaptureActivity.EXTRA_GAME_NAME, game.label)
+                startActivityForResult(intent, reqCapture)
+            },
+            1200L
         )
     }
 
@@ -681,10 +696,27 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
 
         if (requestCode == reqCapture) {
-            if (resultCode == RESULT_OK && data != null) {
-                captureCode = resultCode
-                captureData = data
+            val grantedCode =
+                data?.getIntExtra(CaptureActivity.EXTRA_RESULT_CODE, resultCode)
+                    ?: resultCode
+            val grantedData =
+                data?.getParcelableExtra(
+                    CaptureActivity.EXTRA_RESULT_DATA,
+                    Intent::class.java
+                )
+
+            if (grantedCode == RESULT_OK && grantedData != null) {
+                captureCode = grantedCode
+                captureData = grantedData
                 captureReady = true
+
+                // Bring FrameGen back to the foreground so the user can see the
+                // READY state and explicitly press START FRAMEGEN.
+                startActivity(
+                    Intent(this, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                )
+
                 Toast.makeText(
                     this,
                     "Game capture READY. START FRAMEGEN is unlocked.",
@@ -696,10 +728,11 @@ class MainActivity : Activity() {
                 captureReady = false
                 Toast.makeText(
                     this,
-                    "Screen capture cancelled.",
+                    "Screen capture cancelled. START remains locked.",
                     Toast.LENGTH_LONG
                 ).show()
             }
+
             refreshReadiness()
         }
     }
