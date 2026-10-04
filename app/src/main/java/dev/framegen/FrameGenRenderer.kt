@@ -15,6 +15,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.Surface
+import java.nio.ByteBuffer
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.LockSupport
@@ -33,8 +34,9 @@ class FrameGenRenderer(
     private var h: Int,
     private val dpi: Int,
     private val refreshHz: Float,
+    private val modelDirectory: String,
     private val onBufferSize: (Int, Int) -> Unit
-) : Thread("FrameGen-GL") {
+) : Thread("FrameGen-AI") {
 
     companion object {
         private const val TAG = "FrameGen"
@@ -186,6 +188,14 @@ void main() {
     private var bw = 0
     private var bh = 0
 
+    // True neural frame-generation path.
+    private var aiTex = 0
+    private var ai: AiFrameGenerator? = null
+    private var previousPixels: ByteBuffer? = null
+    private var currentPixels: ByteBuffer? = null
+    private var generatedPixels: ByteBuffer? = null
+    private var aiReady = false
+
     fun requestResize(nw: Int, nh: Int) { pending = intArrayOf(nw, nh) }
 
     fun shutdown() {
@@ -225,15 +235,19 @@ void main() {
 
             drawOes(cur)
 
+            val captureBuffer = currentPixels
+            if (captureBuffer == null) {
+                ensureAiBuffers()
+            }
+
+            captureCurrentFrame()
+
             if (havePrev) {
-                val prev = 1 - cur
                 val dt = (now - lastT).coerceIn(8_000_000L, 100_000_000L)
                 interval = (interval * 0.7 + dt * 0.3).toLong()
 
-                motion(prev, cur)
-
                 // Do not ask the compositor for a frame rate the physical panel
-                // cannot present. Example: 60 Hz -> 90 Hz is not a valid 2X target.
+                // cannot present.
                 val displayLimitedMultiplier = (refreshHz * interval / 1_000_000_000.0)
                     .toInt()
                     .coerceAtLeast(1)
@@ -245,24 +259,65 @@ void main() {
                 } else {
                     val step = interval / effectiveMultiplier
                     val base = System.nanoTime()
+                    var generatedAny = false
 
-                    // The generated frames are synthesized between the two real
-                    // captured frames, then the real current frame is presented.
-                    for (k in 1 until effectiveMultiplier) {
-                        drawInterp(prev, cur, k.toFloat() / effectiveMultiplier)
-                        sleepUntil(base + k * step)
-                        EGL14.eglSwapBuffers(dpy, surf)
+                    val prevPixels = previousPixels
+                    val currPixels = currentPixels
+                    val outPixels = generatedPixels
+                    val neural = ai
+
+                    if (aiReady && neural != null && prevPixels != null && currPixels != null && outPixels != null) {
+                        for (k in 1 until effectiveMultiplier) {
+                            val ok = neural.interpolate(
+                                prevPixels,
+                                currPixels,
+                                outPixels,
+                                w,
+                                h,
+                                k.toFloat() / effectiveMultiplier
+                            )
+
+                            if (ok) {
+                                uploadAiFrame()
+                                drawBlit(aiTex)
+                                generatedAny = true
+                            } else {
+                                // Emergency fallback only; this is not labeled as AI.
+                                drawInterp(1 - cur, cur, k.toFloat() / effectiveMultiplier)
+                            }
+
+                            sleepUntil(base + k * step)
+                            EGL14.eglSwapBuffers(dpy, surf)
+                        }
+                    } else {
+                        motion(1 - cur, cur)
+                        for (k in 1 until effectiveMultiplier) {
+                            drawInterp(1 - cur, cur, k.toFloat() / effectiveMultiplier)
+                            sleepUntil(base + k * step)
+                            EGL14.eglSwapBuffers(dpy, surf)
+                        }
                     }
 
                     drawBlit(tex[cur])
                     sleepUntil(base + effectiveMultiplier * step)
                     EGL14.eglSwapBuffers(dpy, surf)
+
+                    if (generatedAny) {
+                        // Keep the real current frame as the anchor for the next pair.
+                    }
                 }
             } else {
                 drawBlit(tex[cur])
                 EGL14.eglSwapBuffers(dpy, surf)
                 havePrev = true
             }
+
+            // Swap the CPU AI frame buffers so the next capture becomes the
+            // "previous" real frame without allocating every frame.
+            val oldPrevious = previousPixels
+            previousPixels = currentPixels
+            currentPixels = oldPrevious
+
             lastT = now
             cur = 1 - cur
         }
@@ -375,6 +430,19 @@ void main() {
         GLES30.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
 
         createTargets()
+        ensureAiBuffers()
+        ai = try {
+            if (modelDirectory.isNotEmpty()) {
+                AiFrameGenerator(modelDirectory)
+            } else {
+                null
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "AI backend unavailable", t)
+            null
+        }
+        aiReady = ai?.isReady == true
+        Log.i(TAG, if (aiReady) "RIFE v4.6 neural frame generation READY" else "RIFE neural backend unavailable; using shader fallback")
 
         val s = SurfaceTexture(oesTex)
         s.setDefaultBufferSize(w, h)
@@ -411,6 +479,7 @@ void main() {
         bw = w / BLOCK; bh = h / BLOCK
         for (i in 0..1) { tex[i] = makeTex(w, h); fbo[i] = makeFbo(tex[i]) }
         mvTex = makeTex(bw, bh); mvFbo = makeFbo(mvTex)
+        aiTex = makeTex(w, h)
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
     }
 
@@ -419,6 +488,58 @@ void main() {
         GLES30.glDeleteTextures(2, tex, 0)
         GLES30.glDeleteFramebuffers(1, intArrayOf(mvFbo), 0)
         GLES30.glDeleteTextures(1, intArrayOf(mvTex), 0)
+        GLES30.glDeleteTextures(1, intArrayOf(aiTex), 0)
+    }
+
+    private fun ensureAiBuffers() {
+        val bytes = w.toLong() * h.toLong() * 4L
+        if (bytes <= 0L || bytes > Int.MAX_VALUE) return
+        val size = bytes.toInt()
+
+        fun ensure(old: ByteBuffer?): ByteBuffer {
+            return if (old == null || old.capacity() < size) {
+                ByteBuffer.allocateDirect(size)
+            } else {
+                old
+            }
+        }
+
+        previousPixels = ensure(previousPixels)
+        currentPixels = ensure(currentPixels)
+        generatedPixels = ensure(generatedPixels)
+        GLES30.glPixelStorei(GLES30.GL_PACK_ALIGNMENT, 1)
+        GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
+    }
+
+    private fun captureCurrentFrame() {
+        val dst = currentPixels ?: return
+        dst.position(0)
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo[if (pending == null) 0 else 0])
+        // drawOes() leaves the current frame target bound. Restore it using the
+        // currently rendered texture's FBO by looking at the pixel source is not
+        // possible after a swap, so use tex[0]/tex[1] explicitly in the loop.
+        //
+        // The loop calls drawOes(cur), so the active FBO is still that target.
+        GLES30.glReadPixels(0, 0, w, h, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, dst)
+        dst.position(0)
+    }
+
+    private fun uploadAiFrame() {
+        val src = generatedPixels ?: return
+        src.position(0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, aiTex)
+        GLES30.glTexSubImage2D(
+            GLES30.GL_TEXTURE_2D,
+            0,
+            0,
+            0,
+            w,
+            h,
+            GLES30.GL_RGBA,
+            GLES30.GL_UNSIGNED_BYTE,
+            src
+        )
+        src.position(0)
     }
 
     private fun shader(type: Int, src: String): Int {
@@ -446,6 +567,13 @@ void main() {
         try { vd?.release() } catch (_: Throwable) {}
         try { stSurface?.release() } catch (_: Throwable) {}
         try { st?.release() } catch (_: Throwable) {}
+        try { ai?.close() } catch (_: Throwable) {}
+        ai = null
+        aiReady = false
+        previousPixels = null
+        currentPixels = null
+        generatedPixels = null
+
         try {
             if (dpy != EGL14.EGL_NO_DISPLAY) {
                 EGL14.eglMakeCurrent(dpy, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
