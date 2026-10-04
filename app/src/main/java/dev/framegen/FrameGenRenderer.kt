@@ -32,6 +32,7 @@ class FrameGenRenderer(
     private var w: Int,
     private var h: Int,
     private val dpi: Int,
+    private val refreshHz: Float,
     private val onBufferSize: (Int, Int) -> Unit
 ) : Thread("FrameGen-GL") {
 
@@ -128,20 +129,38 @@ uniform vec2 uTexel;
 uniform float uT;
 in vec2 vUv;
 out vec4 o;
+
+vec3 clampToPairNeighborhood(vec3 value, vec3 a, vec3 b) {
+    vec3 lo = min(a, b) - vec3(0.05);
+    vec3 hi = max(a, b) + vec3(0.05);
+    return clamp(value, lo, hi);
+}
+
 void main() {
     vec4 m = texture(uMv, vUv);
     vec2 d = (m.rg - 0.5) * 64.0 * uTexel;
-    vec3 a = texture(uPrev, vUv + d * uT).rgb;
-    vec3 b = texture(uCurr, vUv - d * (1.0 - uT)).rgb;
+
+    vec2 prevUv = vUv + d * uT;
+    vec2 currUv = vUv - d * (1.0 - uT);
+
+    vec3 a = texture(uPrev, prevUv).rgb;
+    vec3 b = texture(uCurr, currUv).rgb;
     vec3 pa = texture(uPrev, vUv).rgb;
     vec3 pb = texture(uCurr, vUv).rgb;
+
     vec3 comp = mix(a, b, uT);
+    comp = clampToPairNeighborhood(comp, pa, pb);
+
     vec3 plain = mix(pa, pb, uT);
     vec3 nearest = (uT < 0.5) ? pa : pb;
     vec3 fallback = mix(nearest, plain, 0.5);
-    float conf = 1.0 - smoothstep(0.35, 0.8, m.b);
-    float agree = 1.0 - smoothstep(0.10, 0.35, length(a - b));
-    o = vec4(mix(fallback, comp, conf * agree), 1.0);
+
+    float motionConfidence = 1.0 - smoothstep(0.28, 0.78, m.b);
+    float warpAgreement = 1.0 - smoothstep(0.08, 0.30, length(a - b));
+    float sceneChangeGuard = 1.0 - smoothstep(0.22, 0.62, length(pa - pb));
+
+    float confidence = motionConfidence * warpAgreement * sceneChangeGuard;
+    o = vec4(mix(fallback, comp, confidence), 1.0);
 }"""
     }
 
@@ -212,16 +231,33 @@ void main() {
                 interval = (interval * 0.7 + dt * 0.3).toLong()
 
                 motion(prev, cur)
-                val step = interval / multiplier
-                val base = System.nanoTime()
-                for (k in 1 until multiplier) {
-                    drawInterp(prev, cur, k.toFloat() / multiplier)
-                    sleepUntil(base + (k - 1) * step)
+
+                // Do not ask the compositor for a frame rate the physical panel
+                // cannot present. Example: 60 Hz -> 90 Hz is not a valid 2X target.
+                val displayLimitedMultiplier = (refreshHz * interval / 1_000_000_000.0)
+                    .toInt()
+                    .coerceAtLeast(1)
+                val effectiveMultiplier = multiplier.coerceAtMost(displayLimitedMultiplier)
+
+                if (effectiveMultiplier <= 1) {
+                    drawBlit(tex[cur])
+                    EGL14.eglSwapBuffers(dpy, surf)
+                } else {
+                    val step = interval / effectiveMultiplier
+                    val base = System.nanoTime()
+
+                    // The generated frames are synthesized between the two real
+                    // captured frames, then the real current frame is presented.
+                    for (k in 1 until effectiveMultiplier) {
+                        drawInterp(prev, cur, k.toFloat() / effectiveMultiplier)
+                        sleepUntil(base + k * step)
+                        EGL14.eglSwapBuffers(dpy, surf)
+                    }
+
+                    drawBlit(tex[cur])
+                    sleepUntil(base + effectiveMultiplier * step)
                     EGL14.eglSwapBuffers(dpy, surf)
                 }
-                drawBlit(tex[cur])
-                sleepUntil(base + (multiplier - 1) * step)
-                EGL14.eglSwapBuffers(dpy, surf)
             } else {
                 drawBlit(tex[cur])
                 EGL14.eglSwapBuffers(dpy, surf)
